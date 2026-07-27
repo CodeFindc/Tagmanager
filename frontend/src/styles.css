@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #172033;
+  --color-paper: #f7f8fb;
+  --color-brand: #2456d6;
+  --color-mint: #d6f4e8;
+}
+
+:root { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--color-ink); background: var(--color-paper); }
+body { margin: 0; min-width: 320px; }
+button, input, textarea, select { font: inherit; }
