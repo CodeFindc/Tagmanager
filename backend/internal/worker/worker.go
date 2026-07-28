@@ -31,6 +31,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for {
+		if n, err := w.reclaimStaleRunning(ctx); err != nil {
+			w.logger.Error("reclaim stale running jobs", "error", err)
+		} else if n > 0 {
+			w.logger.Warn("reclaimed stale running consolidation jobs", "count", n)
+		}
 		if err := w.ProcessOne(ctx); err != nil {
 			w.logger.Error("process consolidation job", "error", err)
 		}
@@ -40,6 +45,26 @@ func (w *Worker) Run(ctx context.Context) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+// reclaimStaleRunning returns jobs stuck in running (e.g. worker crash or prior status-cast bugs)
+// to the retryable queue so threshold freezes are not permanently blocked.
+func (w *Worker) reclaimStaleRunning(ctx context.Context) (int64, error) {
+	tag, err := w.pool.Exec(ctx, `
+		UPDATE consolidation_jobs
+		SET status='retryable_failed'::job_status,
+		    error_message=CASE
+		      WHEN error_message = '' THEN 'reclaimed stale running job'
+		      ELSE error_message
+		    END,
+		    run_after=now(),
+		    completed_at=NULL
+		WHERE status='running'::job_status
+		  AND COALESCE(started_at, created_at) < now() - interval '2 minutes'`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
 }
 
 type claimedJob struct {

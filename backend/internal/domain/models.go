@@ -39,12 +39,16 @@ type Tag struct {
 }
 
 type ImportResult struct {
-	ID           string `json:"id"`
-	TotalCount   int    `json:"totalCount"`
-	MatchedCount int    `json:"matchedCount"`
-	PooledCount  int    `json:"pooledCount"`
-	InvalidCount int    `json:"invalidCount"`
-	JobID        string `json:"jobId,omitempty"`
+	ID                   string `json:"id"`
+	TotalCount           int    `json:"totalCount"`
+	MatchedCount         int    `json:"matchedCount"`
+	PooledCount          int    `json:"pooledCount"`
+	InvalidCount         int    `json:"invalidCount"`
+	JobID                string `json:"jobId,omitempty"`
+	OpenCandidates       int    `json:"openCandidates,omitempty"`
+	Threshold            int    `json:"threshold,omitempty"`
+	ConsolidationStatus  string `json:"consolidationStatus,omitempty"`  // created | already_active | reclaimed | not_triggered
+	ConsolidationMessage string `json:"consolidationMessage,omitempty"`
 }
 
 type PoolEntry struct {

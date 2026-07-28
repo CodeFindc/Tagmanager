@@ -555,12 +555,36 @@ function ImportPage() {
         <button disabled={!namespaceId || !raw.trim()} className="mt-4 rounded-lg bg-brand px-4 py-2 font-semibold text-white text-sm disabled:opacity-50">提交并处理</button>
       </form>
       {result && (
-        <div className="mt-5 grid gap-3 sm:grid-cols-4">
-          <Card title="总计" value={result.totalCount} detail="原始输入" />
-          <Card title="已命中" value={result.matchedCount} detail="未新增标签" />
-          <Card title="进入候选池" value={result.pooledCount} detail="等待阈值触发" />
-          <Card title="无效项" value={result.invalidCount} detail={result.jobId ? '已创建汇总任务' : '等待阈值'} />
-        </div>
+        <>
+          <div className="mt-5 grid gap-3 sm:grid-cols-4">
+            <Card title="总计" value={result.totalCount} detail="原始输入" />
+            <Card title="已命中" value={result.matchedCount} detail="未新增标签" />
+            <Card title="进入候选池" value={result.pooledCount} detail={typeof result.openCandidates === 'number' ? `未解决共 ${result.openCandidates}` : '等待阈值触发'} />
+            <Card title="无效项" value={result.invalidCount} detail={typeof result.threshold === 'number' ? `阈值 ${result.threshold}` : '—'} />
+          </div>
+          {result.consolidationMessage && (
+            <div className={`mt-4 rounded-xl border p-4 text-sm ${
+              result.consolidationStatus === 'created' || result.consolidationStatus === 'reclaimed'
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+                : result.consolidationStatus === 'already_active'
+                  ? 'border-amber-200 bg-amber-50 text-amber-900'
+                  : 'border-slate-200 bg-slate-50 text-slate-700'
+            }`}>
+              <p className="font-semibold">
+                {result.consolidationStatus === 'created' && '已触发汇总'}
+                {result.consolidationStatus === 'reclaimed' && '已回收卡住任务并重新入队'}
+                {result.consolidationStatus === 'already_active' && '未新建任务（已有活跃窗口）'}
+                {result.consolidationStatus === 'not_triggered' && '未触发汇总'}
+                {!['created', 'reclaimed', 'already_active', 'not_triggered'].includes(result.consolidationStatus || '') && '汇总状态'}
+              </p>
+              <p className="mt-1">{result.consolidationMessage}</p>
+              {result.jobId && <p className="mt-1 font-mono text-xs opacity-80">jobId: {result.jobId}</p>}
+              {(result.consolidationStatus === 'created' || result.consolidationStatus === 'reclaimed' || result.consolidationStatus === 'already_active') && (
+                <p className="mt-2 text-xs opacity-80">可到审核中心查看提案；若长时间没有结果，请检查 worker 日志与 LLM 配置。</p>
+              )}
+            </div>
+          )}
+        </>
       )}
     </section>
   )

@@ -197,31 +197,118 @@ func (s *Store) ImportTags(ctx context.Context, namespaceID, idempotencyKey, sou
 	if err = tx.QueryRow(ctx, `SELECT count(*) FROM candidate_pool_entries WHERE namespace_id=$1 AND resolved_at IS NULL`, namespaceID).Scan(&count); err != nil {
 		return domain.ImportResult{}, err
 	}
+	result.Threshold = threshold
+	result.OpenCandidates = count
 	shouldConsolidate := initialSeed || count >= threshold
-	if shouldConsolidate {
-		var windowID string
-		snapshot, buildErr := s.poolSnapshotTx(ctx, tx, namespaceID)
-		if buildErr != nil {
-			return domain.ImportResult{}, buildErr
+	if !shouldConsolidate {
+		result.ConsolidationStatus = "not_triggered"
+		result.ConsolidationMessage = fmt.Sprintf("未解决候选 %d / 阈值 %d，未达到触发条件", count, threshold)
+		return result, tx.Commit(ctx)
+	}
+	snapshot, buildErr := s.poolSnapshotTx(ctx, tx, namespaceID)
+	if buildErr != nil {
+		return domain.ImportResult{}, buildErr
+	}
+	trigger := "threshold"
+	jobType := "pool_window"
+	if initialSeed {
+		trigger = "initial_seed"
+		jobType = "initial_seed"
+	}
+	jobID, status, message, consErr := s.enqueueConsolidation(ctx, tx, namespaceID, threshold, trigger, jobType, snapshot)
+	if consErr != nil {
+		return domain.ImportResult{}, consErr
+	}
+	result.JobID = jobID
+	result.ConsolidationStatus = status
+	result.ConsolidationMessage = message
+	return result, tx.Commit(ctx)
+}
+
+// enqueueConsolidation freezes a pool window and enqueues a job.
+// If an active window already blocks the partial unique index, it reclaims stale
+// running/failed work when safe, otherwise reports already_active with the existing job id.
+func (s *Store) enqueueConsolidation(ctx context.Context, tx pgx.Tx, namespaceID string, threshold int, trigger, jobType string, snapshot []byte) (jobID, status, message string, err error) {
+	var windowID string
+	err = tx.QueryRow(ctx, `INSERT INTO pool_windows(namespace_id,threshold,trigger_reason,input_snapshot) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`, namespaceID, threshold, trigger, snapshot).Scan(&windowID)
+	if err != nil && err != pgx.ErrNoRows {
+		return "", "", "", err
+	}
+	if windowID != "" {
+		err = tx.QueryRow(ctx, `INSERT INTO consolidation_jobs(namespace_id,pool_window_id,job_type) VALUES($1,$2,$3) RETURNING id`, namespaceID, windowID, jobType).Scan(&jobID)
+		if err != nil {
+			return "", "", "", err
 		}
-		trigger := "threshold"
-		jobType := "pool_window"
-		if initialSeed {
-			trigger = "initial_seed"
-			jobType = "initial_seed"
-		}
-		err = tx.QueryRow(ctx, `INSERT INTO pool_windows(namespace_id,threshold,trigger_reason,input_snapshot) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`, namespaceID, threshold, trigger, snapshot).Scan(&windowID)
-		if err != nil && err != pgx.ErrNoRows {
-			return domain.ImportResult{}, err
-		}
-		if windowID != "" {
-			err = tx.QueryRow(ctx, `INSERT INTO consolidation_jobs(namespace_id,pool_window_id,job_type) VALUES($1,$2,$3) RETURNING id`, namespaceID, windowID, jobType).Scan(&result.JobID)
+		return jobID, "created", "已创建汇总任务，等待 worker 调用模型", nil
+	}
+
+	// Active window exists — inspect and recover stale states left by crashes / enum bugs.
+	var activeWindowID, windowStatus string
+	if err = tx.QueryRow(ctx, `SELECT id, status::text FROM pool_windows WHERE namespace_id=$1 AND status IN ('frozen','generating','awaiting_review') ORDER BY created_at DESC LIMIT 1`, namespaceID).Scan(&activeWindowID, &windowStatus); err != nil {
+		if err == pgx.ErrNoRows {
+			err = tx.QueryRow(ctx, `INSERT INTO pool_windows(namespace_id,threshold,trigger_reason,input_snapshot) VALUES($1,$2,$3,$4) RETURNING id`, namespaceID, threshold, trigger, snapshot).Scan(&windowID)
 			if err != nil {
-				return domain.ImportResult{}, err
+				return "", "", "", err
 			}
+			err = tx.QueryRow(ctx, `INSERT INTO consolidation_jobs(namespace_id,pool_window_id,job_type) VALUES($1,$2,$3) RETURNING id`, namespaceID, windowID, jobType).Scan(&jobID)
+			if err != nil {
+				return "", "", "", err
+			}
+			return jobID, "created", "已创建汇总任务，等待 worker 调用模型", nil
+		}
+		return "", "", "", err
+	}
+
+	if windowStatus == "awaiting_review" {
+		_ = tx.QueryRow(ctx, `SELECT id::text FROM consolidation_jobs WHERE pool_window_id=$1 ORDER BY created_at DESC LIMIT 1`, activeWindowID).Scan(&jobID)
+		return jobID, "already_active", "该域已有待审核窗口，请先在审核中心处理后再触发新的归并", nil
+	}
+
+	var existingJobID, jobStatus string
+	jobErr := tx.QueryRow(ctx, `SELECT id::text, status::text FROM consolidation_jobs WHERE pool_window_id=$1 ORDER BY created_at DESC LIMIT 1`, activeWindowID).Scan(&existingJobID, &jobStatus)
+	if jobErr != nil && jobErr != pgx.ErrNoRows {
+		return "", "", "", jobErr
+	}
+
+	// Reclaim jobs stuck in running (classic symptom after status enum cast failures).
+	if jobErr == nil && jobStatus == "running" {
+		if _, err = tx.Exec(ctx, `UPDATE consolidation_jobs SET status='retryable_failed'::job_status, error_message=CASE WHEN error_message='' THEN 'reclaimed on import: was stuck running' ELSE error_message END, run_after=now(), completed_at=NULL WHERE id=$1`, existingJobID); err != nil {
+			return "", "", "", err
+		}
+		return existingJobID, "reclaimed", "发现卡住的 running 任务，已重新入队，worker 将重试调用模型", nil
+	}
+
+	// Dead end: failed job still holding a frozen/generating window with no pending proposal — release and create fresh.
+	if jobErr == nil && jobStatus == "failed" {
+		var pending int
+		if err = tx.QueryRow(ctx, `SELECT count(*) FROM consolidation_proposals WHERE pool_window_id=$1 AND status='pending_review'`, activeWindowID).Scan(&pending); err != nil {
+			return "", "", "", err
+		}
+		if pending == 0 {
+			if _, err = tx.Exec(ctx, `UPDATE pool_windows SET status='failed'::pool_window_status, updated_at=now() WHERE id=$1`, activeWindowID); err != nil {
+				return "", "", "", err
+			}
+			err = tx.QueryRow(ctx, `INSERT INTO pool_windows(namespace_id,threshold,trigger_reason,input_snapshot) VALUES($1,$2,$3,$4) RETURNING id`, namespaceID, threshold, trigger, snapshot).Scan(&windowID)
+			if err != nil {
+				return "", "", "", err
+			}
+			err = tx.QueryRow(ctx, `INSERT INTO consolidation_jobs(namespace_id,pool_window_id,job_type) VALUES($1,$2,$3) RETURNING id`, namespaceID, windowID, jobType).Scan(&jobID)
+			if err != nil {
+				return "", "", "", err
+			}
+			return jobID, "created", "已释放失败窗口并重新创建汇总任务", nil
 		}
 	}
-	return result, tx.Commit(ctx)
+
+	if existingJobID != "" && (jobStatus == "queued" || jobStatus == "retryable_failed") {
+		_, _ = tx.Exec(ctx, `UPDATE consolidation_jobs SET run_after=now() WHERE id=$1`, existingJobID)
+		return existingJobID, "already_active", fmt.Sprintf("该域已有汇总任务（状态 %s），等待 worker 处理，不会重复创建", jobStatus), nil
+	}
+
+	if existingJobID != "" {
+		return existingJobID, "already_active", fmt.Sprintf("该域已有活跃窗口（窗口 %s / 任务 %s），不会重复触发", windowStatus, jobStatus), nil
+	}
+	return "", "already_active", fmt.Sprintf("该域已有活跃窗口（%s）但找不到关联任务，请检查 consolidation_jobs", windowStatus), nil
 }
 
 func (s *Store) poolSnapshotTx(ctx context.Context, tx pgx.Tx, namespaceID string) ([]byte, error) {
