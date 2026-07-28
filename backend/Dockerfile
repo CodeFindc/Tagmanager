@@ -1,5 +1,7 @@
 ARG MIRROR_PREFIX=""
 FROM ${MIRROR_PREFIX}golang:1.24-alpine AS build
+ARG GOPROXY=""
+ENV GOPROXY=${GOPROXY}
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download

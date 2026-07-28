@@ -20,6 +20,7 @@ services:
       context: ./backend
       args:
         MIRROR_PREFIX: docker.1ms.run/library/
+        GOPROXY: https://goproxy.cn,direct
     command: ["/app/api"]
     env_file: .env
     environment:
@@ -36,6 +37,7 @@ services:
       context: ./backend
       args:
         MIRROR_PREFIX: docker.1ms.run/library/
+        GOPROXY: https://goproxy.cn,direct
     command: ["/app/worker"]
     env_file: .env
     environment:
