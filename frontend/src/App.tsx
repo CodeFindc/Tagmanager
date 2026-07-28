@@ -753,7 +753,8 @@ function ReviewPage() {
         initial[prop.id] = {}
         for (const tag of prop.tags) {
           initial[prop.id][tag.id] = {
-            accepted: true,
+            // Respect server decision after review; pending tags have accepted=null → default true.
+            accepted: tag.accepted ?? true,
             canonicalName: tag.canonicalName,
             description: tag.description,
             aliases: tag.aliases.join(', '),
@@ -816,7 +817,7 @@ function ReviewPage() {
       <div className="space-y-5">
         {proposals.map(proposal => {
           const edits = itemEdits[proposal.id] ?? {}
-          const acceptedCount = proposal.tags.filter(t => (edits[t.id]?.accepted ?? true)).length
+          const acceptedCount = proposal.tags.filter(t => (edits[t.id]?.accepted ?? t.accepted ?? true)).length
           const readonly = proposal.status !== 'pending_review' && proposal.status !== 'pending'
 
           return (
@@ -843,7 +844,7 @@ function ReviewPage() {
                 <div className="grid gap-3 xl:grid-cols-2">
                   {proposal.tags.map(tag => {
                     const edit = edits[tag.id] ?? {
-                      accepted: true,
+                      accepted: tag.accepted ?? true,
                       canonicalName: tag.canonicalName,
                       description: tag.description,
                       aliases: tag.aliases.join(', '),
