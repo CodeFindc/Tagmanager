@@ -38,7 +38,9 @@ func Load() (Config, error) {
 			BaseURL:    strings.TrimRight(strings.TrimSpace(os.Getenv("LLM_BASE_URL")), "/"),
 			APIKey:     strings.TrimSpace(os.Getenv("LLM_API_KEY")),
 			Model:      strings.TrimSpace(os.Getenv("LLM_MODEL")),
-			Timeout:    time.Duration(intValueOrDefault("LLM_TIMEOUT_SECONDS", 60)) * time.Second,
+			// Local 27B+ OpenAI-compatible servers often need several minutes for
+				// structured consolidation of a full candidate window.
+				Timeout:    time.Duration(intValueOrDefault("LLM_TIMEOUT_SECONDS", 300)) * time.Second,
 			MaxRetries: intValueOrDefault("LLM_MAX_RETRIES", 3),
 		},
 	}

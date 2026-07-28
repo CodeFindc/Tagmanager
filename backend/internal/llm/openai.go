@@ -41,7 +41,7 @@ func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input Consolid
 	req.Header.Set("Content-Type", "application/json")
 	response, err := c.client.Do(req)
 	if err != nil {
-		return domain.ConsolidationOutput{}, err
+		return domain.ConsolidationOutput{}, fmt.Errorf("LLM request to %s failed (timeout %s, model %s, %d entries): %w", c.baseURL+"/chat/completions", c.client.Timeout, c.model, len(input.Entries), err)
 	}
 	defer response.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
