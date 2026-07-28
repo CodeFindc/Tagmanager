@@ -25,6 +25,9 @@
 copy .env.example .env
 # 在 .env 中设置安全的 JWT_SECRET、PostgreSQL 密码和 LLM_* 参数
 docker compose up --build
+
+# 国内极速镜像加速版 (使用 docker.1ms.run 镜像源):
+docker compose -f compose.accelerated.yaml up --build
 ```
 
 - 控制台：<http://localhost:4173>
