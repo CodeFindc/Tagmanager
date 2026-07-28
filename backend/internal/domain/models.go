@@ -11,9 +11,12 @@ const (
 )
 
 type User struct {
-	ID    string `json:"id"`
-	Email string `json:"email"`
-	Role  Role   `json:"role"`
+	ID                 string     `json:"id"`
+	Email              string     `json:"email"`
+	Role               Role       `json:"role"`
+	MustChangePassword bool       `json:"mustChangePassword"`
+	PasswordChangedAt  *time.Time `json:"passwordChangedAt,omitempty"`
+	CreatedAt          time.Time  `json:"createdAt"`
 }
 
 type Namespace struct {

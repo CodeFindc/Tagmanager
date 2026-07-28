@@ -14,13 +14,17 @@ import (
 )
 
 type Worker struct {
-	pool   *pgxpool.Pool
-	llm    llm.Client
-	logger *slog.Logger
+	pool        *pgxpool.Pool
+	llm         llm.Client
+	logger      *slog.Logger
+	maxAttempts int
 }
 
-func New(pool *pgxpool.Pool, client llm.Client, logger *slog.Logger) *Worker {
-	return &Worker{pool: pool, llm: client, logger: logger}
+func New(pool *pgxpool.Pool, client llm.Client, logger *slog.Logger, maxAttempts int) *Worker {
+	if maxAttempts <= 0 {
+		maxAttempts = 3
+	}
+	return &Worker{pool: pool, llm: client, logger: logger, maxAttempts: maxAttempts}
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -120,8 +124,15 @@ func validateOutput(output domain.ConsolidationOutput, entries []llm.InputEntry)
 	return nil
 }
 
+func determineFailStatus(attempt, maxAttempts int) string {
+	if attempt >= maxAttempts {
+		return "failed"
+	}
+	return "retryable_failed"
+}
+
 func (w *Worker) fail(ctx context.Context, jobID, windowID string, cause error) error {
-	_, err := w.pool.Exec(ctx, `UPDATE consolidation_jobs SET status=CASE WHEN attempt >= 3 THEN 'failed' ELSE 'retryable_failed' END,error_message=$2,run_after=now()+interval '30 seconds',completed_at=now() WHERE id=$1`, jobID, cause.Error())
+	_, err := w.pool.Exec(ctx, `UPDATE consolidation_jobs SET status=CASE WHEN attempt >= $3 THEN 'failed' ELSE 'retryable_failed' END,error_message=$2,run_after=now()+LEAST(300, (2 ^ LEAST(attempt, 10)) * 10) * interval '1 second',completed_at=now() WHERE id=$1`, jobID, cause.Error(), w.maxAttempts)
 	if err != nil {
 		return err
 	}

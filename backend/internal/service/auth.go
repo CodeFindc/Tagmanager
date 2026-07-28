@@ -40,3 +40,31 @@ func ParseToken(secret, raw string) (TokenClaims, error) {
 	}
 	return claims, nil
 }
+
+func ValidatePasswordStrength(password string) error {
+	if len(password) < 12 {
+		return errors.New("password must be at least 12 characters long")
+	}
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasNumber  bool
+		hasSpecial bool
+	)
+	for _, ch := range password {
+		switch {
+		case 'A' <= ch && ch <= 'Z':
+			hasUpper = true
+		case 'a' <= ch && ch <= 'z':
+			hasLower = true
+		case '0' <= ch && ch <= '9':
+			hasNumber = true
+		default:
+			hasSpecial = true
+		}
+	}
+	if !hasUpper || !hasLower || !hasNumber || !hasSpecial {
+		return errors.New("password must contain uppercase, lowercase, digit, and special character")
+	}
+	return nil
+}

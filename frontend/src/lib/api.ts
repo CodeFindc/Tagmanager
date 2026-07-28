@@ -1,4 +1,4 @@
-import type { ImportResult, Namespace, PoolEntry, Proposal, Tag, User } from '../types/api'
+import type { ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -25,6 +25,10 @@ export const api = {
   importTags: (payload: { namespaceId: string; sourceName: string; tags: string[]; initialSeed: boolean }) => request<ImportResult>('/imports', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify(payload) }),
   proposals: () => request<{ data: Proposal[] }>('/review/proposals'),
   decideProposal: (proposalId: string, payload: { approve: boolean; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),
+  users: () => request<{ data: User[] }>('/users'),
+  createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
+  updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  changePassword: (payload: { oldPassword: string; newPassword: string }) => request<{ status: string }>('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }),
 }
 
 export { APIError }

@@ -26,7 +26,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer application.Close()
-	processor := worker.New(application.Database.Pool, llm.NewOpenAICompatible(cfg.LLM), slog.Default())
+	processor := worker.New(application.Database.Pool, llm.NewOpenAICompatible(cfg.LLM), slog.Default(), cfg.LLM.MaxRetries)
 	if err := processor.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}

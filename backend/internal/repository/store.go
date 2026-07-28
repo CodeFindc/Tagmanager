@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/codefun/tagmanager/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
@@ -15,9 +16,55 @@ type Store struct{ pool *pgxpool.Pool }
 
 func NewStore(db *Database) *Store { return &Store{pool: db.Pool} }
 
-func (s *Store) FindUserByEmail(ctx context.Context, email string) (id, passwordHash string, role domain.Role, err error) {
-	err = s.pool.QueryRow(ctx, `SELECT id,email,password_hash,role FROM users WHERE email=lower($1)`, strings.TrimSpace(email)).Scan(&id, &email, &passwordHash, &role)
+func (s *Store) Ping(ctx context.Context) error {
+	return s.pool.Ping(ctx)
+}
+
+func (s *Store) FindUserByEmail(ctx context.Context, email string) (user domain.User, passwordHash string, err error) {
+	var pwdChangedAt *time.Time
+	err = s.pool.QueryRow(ctx, `SELECT id,email,password_hash,role,must_change_password,password_changed_at,created_at FROM users WHERE email=lower($1)`, strings.TrimSpace(email)).Scan(&user.ID, &user.Email, &passwordHash, &user.Role, &user.MustChangePassword, &pwdChangedAt, &user.CreatedAt)
+	user.PasswordChangedAt = pwdChangedAt
 	return
+}
+
+func (s *Store) CreateUser(ctx context.Context, email, passwordHash string, role domain.Role, mustChangePassword bool) (domain.User, error) {
+	var user domain.User
+	var pwdChangedAt *time.Time
+	err := s.pool.QueryRow(ctx, `INSERT INTO users(email,password_hash,role,must_change_password) VALUES(lower($1),$2,$3,$4) RETURNING id,email,role,must_change_password,password_changed_at,created_at`, strings.TrimSpace(email), passwordHash, role, mustChangePassword).Scan(&user.ID, &user.Email, &user.Role, &user.MustChangePassword, &pwdChangedAt, &user.CreatedAt)
+	user.PasswordChangedAt = pwdChangedAt
+	return user, err
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]domain.User, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id,email,role,must_change_password,password_changed_at,created_at FROM users ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	users := []domain.User{}
+	for rows.Next() {
+		var user domain.User
+		var pwdChangedAt *time.Time
+		if err := rows.Scan(&user.ID, &user.Email, &user.Role, &user.MustChangePassword, &pwdChangedAt, &user.CreatedAt); err != nil {
+			return nil, err
+		}
+		user.PasswordChangedAt = pwdChangedAt
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) UpdateUserRole(ctx context.Context, id string, role domain.Role) (domain.User, error) {
+	var user domain.User
+	var pwdChangedAt *time.Time
+	err := s.pool.QueryRow(ctx, `UPDATE users SET role=$2 WHERE id=$1 RETURNING id,email,role,must_change_password,password_changed_at,created_at`, id, role).Scan(&user.ID, &user.Email, &user.Role, &user.MustChangePassword, &pwdChangedAt, &user.CreatedAt)
+	user.PasswordChangedAt = pwdChangedAt
+	return user, err
+}
+
+func (s *Store) UpdateUserPassword(ctx context.Context, id string, newPasswordHash string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE users SET password_hash=$2, must_change_password=false, password_changed_at=now() WHERE id=$1`, id, newPasswordHash)
+	return err
 }
 
 func (s *Store) ListNamespaces(ctx context.Context) ([]domain.Namespace, error) {
@@ -43,8 +90,11 @@ func (s *Store) CreateNamespace(ctx context.Context, name, description string, t
 	return result, err
 }
 
-func (s *Store) ListTags(ctx context.Context, namespaceID, query string) ([]domain.Tag, error) {
-	rows, err := s.pool.Query(ctx, `SELECT t.id,t.namespace_id,t.canonical_name,t.normalized_name,t.description,t.status,t.version,COALESCE(json_agg(a.alias_name) FILTER (WHERE a.id IS NOT NULL),'[]') FROM tags t LEFT JOIN tag_aliases a ON a.tag_id=t.id WHERE t.namespace_id=$1 AND t.status='published' AND ($2='' OR t.canonical_name ILIKE '%' || $2 || '%') GROUP BY t.id ORDER BY t.canonical_name`, namespaceID, query)
+func (s *Store) ListTags(ctx context.Context, namespaceID, query string, limit int) ([]domain.Tag, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx, `SELECT t.id,t.namespace_id,t.canonical_name,t.normalized_name,t.description,t.status,t.version,COALESCE(json_agg(a.alias_name) FILTER (WHERE a.id IS NOT NULL),'[]') FROM tags t LEFT JOIN tag_aliases a ON a.tag_id=t.id WHERE t.namespace_id=$1 AND t.status='published' AND ($2='' OR t.canonical_name ILIKE '%' || $2 || '%') GROUP BY t.id ORDER BY t.canonical_name LIMIT $3`, namespaceID, query, limit)
 	if err != nil {
 		return nil, err
 	}

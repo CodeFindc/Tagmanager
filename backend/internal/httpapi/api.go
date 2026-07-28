@@ -3,7 +3,9 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/codefun/tagmanager/backend/internal/config"
@@ -28,11 +30,19 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		respond(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	router.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := api.store.Ping(r.Context()); err != nil {
+			respondError(w, http.StatusServiceUnavailable, "database unready")
+			return
+		}
+		respond(w, http.StatusOK, map[string]string{"status": "ready"})
+	})
 	router.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", api.login)
 		r.Group(func(r chi.Router) {
 			r.Use(api.authenticate)
 			r.Get("/me", api.me)
+			r.Post("/auth/change-password", api.changePassword)
 			r.Get("/namespaces", api.listNamespaces)
 			r.Post("/namespaces", api.require(domain.RoleAdmin, api.createNamespace))
 			r.Get("/tags", api.listTags)
@@ -41,6 +51,9 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Get("/review/proposals", api.listProposals)
 			r.Get("/review/proposals/{proposalID}", api.getProposal)
 			r.Post("/review/proposals/{proposalID}/decision", api.require(domain.RoleReviewer, api.decideProposal))
+			r.Get("/users", api.require(domain.RoleAdmin, api.listUsers))
+			r.Post("/users", api.require(domain.RoleAdmin, api.createUser))
+			r.Patch("/users/{id}/role", api.require(domain.RoleAdmin, api.updateUserRole))
 		})
 	})
 	return router
@@ -54,17 +67,17 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if decode(w, r, &body) != nil {
 		return
 	}
-	id, hash, role, err := a.store.FindUserByEmail(r.Context(), body.Email)
+	user, hash, err := a.store.FindUserByEmail(r.Context(), body.Email)
 	if err != nil || service.VerifyPassword(hash, body.Password) != nil {
 		respondError(w, http.StatusUnauthorized, "invalid email or password")
 		return
 	}
-	token, err := service.IssueToken(a.cfg.JWTSecret, id, role)
+	token, err := service.IssueToken(a.cfg.JWTSecret, user.ID, user.Role)
 	if err != nil {
 		respondError(w, 500, "could not issue token")
 		return
 	}
-	respond(w, 200, map[string]any{"token": token, "user": domain.User{ID: id, Email: body.Email, Role: role}})
+	respond(w, 200, map[string]any{"token": token, "user": user})
 }
 func (a *API) me(w http.ResponseWriter, r *http.Request) { respond(w, 200, currentUser(r)) }
 func (a *API) authenticate(next http.Handler) http.Handler {
@@ -120,7 +133,8 @@ func (a *API) createNamespace(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, item)
 }
 func (a *API) listTags(w http.ResponseWriter, r *http.Request) {
-	items, err := a.store.ListTags(r.Context(), r.URL.Query().Get("namespaceId"), r.URL.Query().Get("q"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := a.store.ListTags(r.Context(), r.URL.Query().Get("namespaceId"), r.URL.Query().Get("q"), limit)
 	if err != nil {
 		respondError(w, 500, err.Error())
 		return
@@ -145,9 +159,10 @@ func (a *API) importTags(w http.ResponseWriter, r *http.Request) {
 	if decode(w, r, &body) != nil {
 		return
 	}
-	key := r.Header.Get("Idempotency-Key")
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if key == "" {
-		key = uuid.NewString()
+		respondError(w, http.StatusBadRequest, "Idempotency-Key header is required")
+		return
 	}
 	result, err := a.store.ImportTags(r.Context(), body.NamespaceID, key, body.SourceName, currentUser(r).ID, body.Tags, body.InitialSeed, service.NormalizeTag)
 	if err != nil {
@@ -201,6 +216,101 @@ func (a *API) decideProposal(w http.ResponseWriter, r *http.Request) {
 func (a *API) listProposalData(ctx context.Context, proposalID string) ([]domain.Proposal, error) {
 	return a.store.ListProposals(ctx, proposalID)
 }
+
+func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {
+	users, err := a.store.ListUsers(r.Context())
+	if err != nil {
+		respondError(w, 500, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"data": users})
+}
+
+func (a *API) createUser(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Email    string      `json:"email"`
+		Password string      `json:"password"`
+		Role     domain.Role `json:"role"`
+	}
+	if decode(w, r, &body) != nil {
+		return
+	}
+	if body.Role != domain.RoleAdmin && body.Role != domain.RoleReviewer && body.Role != domain.RoleOperator {
+		respondError(w, 400, "invalid role")
+		return
+	}
+	if body.Password != "" {
+		if err := service.ValidatePasswordStrength(body.Password); err != nil {
+			respondError(w, 400, err.Error())
+			return
+		}
+	} else {
+		body.Password = "TempPwd!" + uuid.NewString()[:8]
+	}
+	hash, err := service.HashPassword(body.Password)
+	if err != nil {
+		respondError(w, 500, "failed to hash password")
+		return
+	}
+	user, err := a.store.CreateUser(r.Context(), body.Email, hash, body.Role, true)
+	if err != nil {
+		respondError(w, 400, err.Error())
+		return
+	}
+	respond(w, http.StatusCreated, map[string]any{
+		"user":            user,
+		"initialPassword": body.Password,
+	})
+}
+
+func (a *API) updateUserRole(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Role domain.Role `json:"role"`
+	}
+	if decode(w, r, &body) != nil {
+		return
+	}
+	if body.Role != domain.RoleAdmin && body.Role != domain.RoleReviewer && body.Role != domain.RoleOperator {
+		respondError(w, 400, "invalid role")
+		return
+	}
+	user, err := a.store.UpdateUserRole(r.Context(), chi.URLParam(r, "id"), body.Role)
+	if err != nil {
+		respondError(w, 400, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, user)
+}
+
+func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OldPassword string `json:"oldPassword"`
+		NewPassword string `json:"newPassword"`
+	}
+	if decode(w, r, &body) != nil {
+		return
+	}
+	if err := service.ValidatePasswordStrength(body.NewPassword); err != nil {
+		respondError(w, 400, err.Error())
+		return
+	}
+	user := currentUser(r)
+	_, hash, err := a.store.FindUserByEmail(r.Context(), user.Email)
+	if err != nil || service.VerifyPassword(hash, body.OldPassword) != nil {
+		respondError(w, http.StatusBadRequest, "incorrect old password")
+		return
+	}
+	newHash, err := service.HashPassword(body.NewPassword)
+	if err != nil {
+		respondError(w, 500, "failed to hash password")
+		return
+	}
+	if err := a.store.UpdateUserPassword(r.Context(), user.ID, newHash); err != nil {
+		respondError(w, 500, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "password updated"})
+}
 func currentUser(r *http.Request) domain.User {
 	user, _ := r.Context().Value(authContextKey{}).(domain.User)
 	return user
@@ -221,5 +331,9 @@ func respond(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 func respondError(w http.ResponseWriter, status int, message string) {
+	if status >= 500 {
+		slog.Error("internal server error", "status", status, "internalMessage", message)
+		message = "internal server error"
+	}
 	respond(w, status, map[string]any{"error": map[string]string{"message": message}})
 }

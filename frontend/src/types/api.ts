@@ -1,6 +1,6 @@
 export type Role = 'admin' | 'reviewer' | 'operator'
 
-export interface User { id: string; email: string; role: Role }
+export interface User { id: string; email: string; role: Role; mustChangePassword?: boolean; passwordChangedAt?: string; createdAt?: string }
 export interface Namespace { id: string; name: string; description: string; candidateThreshold: number }
 export interface Tag { id: string; canonicalName: string; normalizedName: string; description: string; aliases: string[]; status: string; version: number }
 export interface PoolEntry { id: string; rawSample: string; normalizedName: string; occurrenceCount: number; firstSeenAt: string; lastSeenAt: string }
