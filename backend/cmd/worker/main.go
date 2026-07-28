@@ -26,7 +26,14 @@ func main() {
 		log.Fatal(err)
 	}
 	defer application.Close()
-	processor := worker.New(application.Database.Pool, llm.NewOpenAICompatible(cfg.LLM), slog.Default(), cfg.LLM.MaxRetries)
+	logger := slog.Default()
+	logger.Info("worker starting",
+		"llmBaseURL", cfg.LLM.BaseURL,
+		"llmModel", cfg.LLM.Model,
+		"llmTimeout", cfg.LLM.Timeout.String(),
+		"llmMaxRetries", cfg.LLM.MaxRetries,
+	)
+	processor := worker.New(application.Database.Pool, llm.NewOpenAICompatible(cfg.LLM, logger), logger, cfg.LLM.MaxRetries)
 	if err := processor.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}

@@ -49,6 +49,7 @@ func (w *Worker) Run(ctx context.Context) error {
 
 // reclaimStaleRunning returns jobs stuck in running (e.g. worker crash or prior status-cast bugs)
 // to the retryable queue so threshold freezes are not permanently blocked.
+// Threshold is intentionally well above LLM_TIMEOUT so healthy long generations are not reaped.
 func (w *Worker) reclaimStaleRunning(ctx context.Context) (int64, error) {
 	tag, err := w.pool.Exec(ctx, `
 		UPDATE consolidation_jobs
@@ -60,7 +61,7 @@ func (w *Worker) reclaimStaleRunning(ctx context.Context) (int64, error) {
 		    run_after=now(),
 		    completed_at=NULL
 		WHERE status='running'::job_status
-		  AND COALESCE(started_at, created_at) < now() - interval '2 minutes'`)
+		  AND COALESCE(started_at, created_at) < now() - interval '15 minutes'`)
 	if err != nil {
 		return 0, err
 	}
@@ -80,6 +81,13 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 	if err != nil || !ok {
 		return err
 	}
+	started := time.Now()
+	w.logger.Info("claimed consolidation job",
+		"jobId", job.ID,
+		"namespaceId", job.NamespaceID,
+		"windowId", job.WindowID,
+		"jobType", job.JobType,
+	)
 	var namespaceName string
 	var snapshot []byte
 	if err = w.pool.QueryRow(ctx, `SELECT name FROM tag_namespaces WHERE id=$1`, job.NamespaceID).Scan(&namespaceName); err != nil {
@@ -99,14 +107,31 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 	if err = json.Unmarshal(snapshot, &entries); err != nil {
 		return w.fail(ctx, job.ID, job.WindowID, err)
 	}
+	w.logger.Info("calling llm consolidate",
+		"jobId", job.ID,
+		"namespace", namespaceName,
+		"entries", len(entries),
+		"snapshotBytes", len(snapshot),
+		"hasFeedback", feedback != "",
+	)
 	output, err := w.llm.Consolidate(ctx, llm.ConsolidationRequest{NamespaceName: namespaceName, Feedback: feedback, Entries: entries})
 	if err != nil {
+		w.logger.Error("llm consolidate failed", "jobId", job.ID, "elapsed", time.Since(started).String(), "error", err)
 		return w.fail(ctx, job.ID, job.WindowID, err)
 	}
 	if err = validateOutput(output, entries); err != nil {
+		w.logger.Error("llm output validation failed", "jobId", job.ID, "tags", len(output.Tags), "error", err)
 		return w.fail(ctx, job.ID, job.WindowID, err)
 	}
-	return w.persistProposal(ctx, job.ID, job.NamespaceID, job.WindowID, output)
+	if err = w.persistProposal(ctx, job.ID, job.NamespaceID, job.WindowID, output); err != nil {
+		return err
+	}
+	w.logger.Info("consolidation job succeeded",
+		"jobId", job.ID,
+		"tags", len(output.Tags),
+		"elapsed", time.Since(started).Round(time.Millisecond).String(),
+	)
+	return nil
 }
 
 func (w *Worker) claim(ctx context.Context) (claimedJob, bool, error) {

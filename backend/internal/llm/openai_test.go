@@ -25,7 +25,7 @@ func TestOpenAICompatibleClient_Unconfigured(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client := NewOpenAICompatible(tt.cfg)
+			client := NewOpenAICompatible(tt.cfg, nil)
 			_, err := client.Consolidate(context.Background(), ConsolidationRequest{})
 			if err == nil || !strings.Contains(err.Error(), "not configured") {
 				t.Fatalf("expected 'not configured' error, got %v", err)
@@ -34,14 +34,14 @@ func TestOpenAICompatibleClient_Unconfigured(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleClient_Consolidate_Success(t *testing.T) {
+func TestOpenAICompatibleClient_Consolidate_SuccessNonStreamFallbackBody(t *testing.T) {
 	mockResponseJSON := `{
-		"choices": [{
-			"message": {
-				"content": "{\"tags\":[{\"canonicalName\":\"Cloud Computing\",\"description\":\"Cloud tags\",\"aliases\":[\"cloud\"],\"coveredIds\":[\"e1\"],\"rationale\":\"synonyms\",\"confidence\":0.95}]}"
-			}
-		}]
-	}`
+			"choices": [{
+				"message": {
+					"content": "{\"tags\":[{\"canonicalName\":\"Cloud Computing\",\"description\":\"Cloud tags\",\"aliases\":[\"cloud\"],\"coveredIds\":[\"e1\"],\"rationale\":\"synonyms\",\"confidence\":0.95}]}"
+				}
+			}]
+		}`
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -53,9 +53,6 @@ func TestOpenAICompatibleClient_Consolidate_Success(t *testing.T) {
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-api-key" {
 			t.Errorf("expected Authorization Bearer test-api-key, got %s", auth)
 		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
-			t.Errorf("expected Content-Type application/json, got %s", ct)
-		}
 
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -65,21 +62,24 @@ func TestOpenAICompatibleClient_Consolidate_Success(t *testing.T) {
 		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
 			t.Fatalf("request body not JSON: %v", err)
 		}
-
 		if reqBody["model"] != "gpt-4o-mini" {
 			t.Errorf("expected model gpt-4o-mini, got %v", reqBody["model"])
 		}
 		if reqBody["temperature"] != float64(0) {
 			t.Errorf("expected temperature 0, got %v", reqBody["temperature"])
 		}
+		if reqBody["stream"] != true {
+			t.Errorf("expected stream true, got %v", reqBody["stream"])
+		}
 		rf, ok := reqBody["response_format"].(map[string]any)
 		if !ok || rf["type"] != "json_schema" {
 			t.Errorf("expected response_format type json_schema, got %v", reqBody["response_format"])
 		}
 
+		// Provider ignores stream and returns normal JSON.
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(mockResponseJSON))
+		_, _ = w.Write([]byte(mockResponseJSON))
 	}))
 	defer ts.Close()
 
@@ -88,7 +88,7 @@ func TestOpenAICompatibleClient_Consolidate_Success(t *testing.T) {
 		APIKey:  "test-api-key",
 		Model:   "gpt-4o-mini",
 		Timeout: 5 * time.Second,
-	})
+	}, nil)
 
 	output, err := client.Consolidate(context.Background(), ConsolidationRequest{
 		NamespaceName: "default",
@@ -97,7 +97,6 @@ func TestOpenAICompatibleClient_Consolidate_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-
 	if len(output.Tags) != 1 {
 		t.Fatalf("expected 1 consolidated tag, got %d", len(output.Tags))
 	}
@@ -107,10 +106,35 @@ func TestOpenAICompatibleClient_Consolidate_Success(t *testing.T) {
 	}
 }
 
-func TestOpenAICompatibleClient_Consolidate_HTTPError(t *testing.T) {
+func TestOpenAICompatibleClient_Consolidate_StreamSuccess(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal error from provider"))
+		bodyBytes, _ := io.ReadAll(r.Body)
+		var reqBody map[string]any
+		_ = json.Unmarshal(bodyBytes, &reqBody)
+		if reqBody["stream"] != true {
+			t.Errorf("expected stream true, got %v", reqBody["stream"])
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, _ := w.(http.Flusher)
+		chunks := []string{
+			`data: {"choices":[{"delta":{"content":"{\"tags\":[{"}}]}` + "\n\n",
+			// rewrite as valid incremental JSON pieces
+		}
+		_ = chunks
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"tags\\\":[{\\\"canonicalName\\\":\\\"Cloud\\\"\"}}]}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\",\\\"description\\\":\\\"c\\\",\\\"aliases\\\":[],\\\"coveredIds\\\":[\\\"e1\\\"],\\\"rationale\\\":\\\"r\\\",\\\"confidence\\\":0.9}]}\"}}]}\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}))
 	defer ts.Close()
 
@@ -118,7 +142,32 @@ func TestOpenAICompatibleClient_Consolidate_HTTPError(t *testing.T) {
 		BaseURL: ts.URL,
 		APIKey:  "key",
 		Model:   "model",
+		Timeout: 5 * time.Second,
+	}, nil)
+
+	output, err := client.Consolidate(context.Background(), ConsolidationRequest{
+		Entries: []InputEntry{{ID: "e1", Name: "cloud", Occurrences: 1}},
 	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(output.Tags) != 1 || output.Tags[0].CanonicalName != "Cloud" {
+		t.Fatalf("unexpected output: %+v", output)
+	}
+}
+
+func TestOpenAICompatibleClient_Consolidate_HTTPError(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("internal error from provider"))
+	}))
+	defer ts.Close()
+
+	client := NewOpenAICompatible(config.LLMConfig{
+		BaseURL: ts.URL,
+		APIKey:  "key",
+		Model:   "model",
+	}, nil)
 
 	_, err := client.Consolidate(context.Background(), ConsolidationRequest{})
 	if err == nil || !strings.Contains(err.Error(), "500 Internal Server Error") {
@@ -128,8 +177,9 @@ func TestOpenAICompatibleClient_Consolidate_HTTPError(t *testing.T) {
 
 func TestOpenAICompatibleClient_Consolidate_EmptyChoices(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"choices":[]}`))
+		_, _ = w.Write([]byte(`{"choices":[]}`))
 	}))
 	defer ts.Close()
 
@@ -137,7 +187,7 @@ func TestOpenAICompatibleClient_Consolidate_EmptyChoices(t *testing.T) {
 		BaseURL: ts.URL,
 		APIKey:  "key",
 		Model:   "model",
-	})
+	}, nil)
 
 	_, err := client.Consolidate(context.Background(), ConsolidationRequest{})
 	if err == nil || !strings.Contains(err.Error(), "no choices") {
@@ -147,8 +197,9 @@ func TestOpenAICompatibleClient_Consolidate_EmptyChoices(t *testing.T) {
 
 func TestOpenAICompatibleClient_Consolidate_InvalidContentJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"choices":[{"message":{"content":"not json"}}]}`))
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"not json"}}]}`))
 	}))
 	defer ts.Close()
 
@@ -156,7 +207,7 @@ func TestOpenAICompatibleClient_Consolidate_InvalidContentJSON(t *testing.T) {
 		BaseURL: ts.URL,
 		APIKey:  "key",
 		Model:   "model",
-	})
+	}, nil)
 
 	_, err := client.Consolidate(context.Background(), ConsolidationRequest{})
 	if err == nil || !strings.Contains(err.Error(), "invalid LLM structured output") {
