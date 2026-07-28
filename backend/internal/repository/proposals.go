@@ -115,26 +115,40 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 	for _, item := range decision.Tags {
 		selected[item.ProposalTagID] = item
 	}
+
+	// Collect all locked rows first. pgx forbids Exec/Query on the same tx while a
+	// Rows result is still open ("conn busy").
+	type proposalTagRow struct {
+		id, canonical, description string
+		aliases                    []string
+	}
 	rows, err := tx.Query(ctx, `SELECT id,canonical_name,description,aliases FROM proposal_tags WHERE proposal_id=$1 FOR UPDATE`, proposalID)
 	if err != nil {
 		return err
 	}
-	deferred := []struct {
-		id, canonical, description string
-		aliases                    []string
-	}{}
+	existing := []proposalTagRow{}
 	for rows.Next() {
-		var id, canonical, description string
+		var row proposalTagRow
 		var aliasesRaw []byte
-		if err := rows.Scan(&id, &canonical, &description, &aliasesRaw); err != nil {
+		if err := rows.Scan(&row.id, &row.canonical, &row.description, &aliasesRaw); err != nil {
 			rows.Close()
 			return err
 		}
-		var aliases []string
-		if err := json.Unmarshal(aliasesRaw, &aliases); err != nil {
+		if err := json.Unmarshal(aliasesRaw, &row.aliases); err != nil {
 			rows.Close()
 			return err
 		}
+		existing = append(existing, row)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	deferred := []proposalTagRow{}
+	for _, row := range existing {
+		id, canonical, description, aliases := row.id, row.canonical, row.description, row.aliases
 		choice, supplied := selected[id]
 		accepted := decision.Approve
 		if supplied {
@@ -150,21 +164,12 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE proposal_tags SET accepted=$2,edited_name=$3,edited_description=$4 WHERE id=$1`, id, accepted, canonical, description); err != nil {
-			rows.Close()
 			return err
 		}
 		if accepted {
-			deferred = append(deferred, struct {
-				id, canonical, description string
-				aliases                    []string
-			}{id, canonical, description, aliases})
+			deferred = append(deferred, proposalTagRow{id, canonical, description, aliases})
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
 
 	if decision.Approve {
 		for _, item := range deferred {
