@@ -190,15 +190,20 @@ func (a *API) importTags(w http.ResponseWriter, r *http.Request) {
 	respond(w, 201, result)
 }
 func (a *API) listProposals(w http.ResponseWriter, r *http.Request) {
-	items, err := a.listProposalData(r.Context(), "")
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	items, err := a.listProposalData(r.Context(), "", status)
 	if err != nil {
+		if strings.Contains(err.Error(), "invalid status filter") {
+			respondError(w, 400, err.Error())
+			return
+		}
 		respondError(w, 500, err.Error())
 		return
 	}
 	respond(w, 200, map[string]any{"data": items})
 }
 func (a *API) getProposal(w http.ResponseWriter, r *http.Request) {
-	items, err := a.listProposalData(r.Context(), chi.URLParam(r, "proposalID"))
+	items, err := a.listProposalData(r.Context(), chi.URLParam(r, "proposalID"), "")
 	if err != nil || len(items) == 0 {
 		respondError(w, 404, "proposal not found")
 		return
@@ -231,8 +236,8 @@ func (a *API) decideProposal(w http.ResponseWriter, r *http.Request) {
 	respond(w, http.StatusOK, map[string]string{"status": "accepted"})
 }
 
-func (a *API) listProposalData(ctx context.Context, proposalID string) ([]domain.Proposal, error) {
-	return a.store.ListProposals(ctx, proposalID)
+func (a *API) listProposalData(ctx context.Context, proposalID, statusFilter string) ([]domain.Proposal, error) {
+	return a.store.ListProposals(ctx, proposalID, statusFilter)
 }
 
 func (a *API) listUsers(w http.ResponseWriter, r *http.Request) {

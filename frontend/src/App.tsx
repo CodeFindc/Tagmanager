@@ -5,6 +5,7 @@ import type { ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } fr
 import {
   EmptyState,
   Field,
+  Modal,
   Notice,
   PageHeader,
   Panel,
@@ -738,232 +739,362 @@ interface ItemEditState {
   aliases: string
 }
 
-function ReviewPage() {
-  const [proposals, setProposals] = useState<Proposal[]>([])
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState('')
-  const [comments, setComments] = useState<Record<string, string>>({})
-  const [itemEdits, setItemEdits] = useState<Record<string, Record<string, ItemEditState>>>({})
+type ReviewTab = 'pending' | 'reviewed'
 
-  const reload = () => {
-    void api.proposals().then(x => {
-      setProposals(x.data)
-      const initial: Record<string, Record<string, ItemEditState>> = {}
-      for (const prop of x.data) {
-        initial[prop.id] = {}
-        for (const tag of prop.tags) {
-          initial[prop.id][tag.id] = {
-            // Respect server decision after review; pending tags have accepted=null → default true.
-            accepted: tag.accepted ?? true,
-            canonicalName: tag.canonicalName,
-            description: tag.description,
-            aliases: tag.aliases.join(', '),
-          }
-        }
-      }
-      setItemEdits(initial)
-    }).catch(e => setError(e.message))
+function isPendingProposal(status: string) {
+  return status === 'pending_review' || status === 'pending'
+}
+
+function buildItemEdits(proposal: Proposal): Record<string, ItemEditState> {
+  const edits: Record<string, ItemEditState> = {}
+  for (const tag of proposal.tags) {
+    edits[tag.id] = {
+      accepted: tag.accepted ?? true,
+      canonicalName: tag.canonicalName,
+      description: tag.description,
+      aliases: tag.aliases.join(', '),
+    }
+  }
+  return edits
+}
+
+function acceptedSummary(proposal: Proposal) {
+  if (isPendingProposal(proposal.status)) return '—'
+  const accepted = proposal.tags.filter(t => t.accepted === true).length
+  return `${accepted} / ${proposal.tags.length}`
+}
+
+function ReviewPage() {
+  const [tab, setTab] = useState<ReviewTab>('pending')
+  const [proposals, setProposals] = useState<Proposal[]>([])
+  const [pendingCount, setPendingCount] = useState(0)
+  const [reviewedCount, setReviewedCount] = useState(0)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [activeId, setActiveId] = useState<string | null>(null)
+  const [comments, setComments] = useState('')
+  const [itemEdits, setItemEdits] = useState<Record<string, ItemEditState>>({})
+
+  const reload = async (preferTab: ReviewTab = tab) => {
+    setError('')
+    try {
+      const [pending, reviewed] = await Promise.all([
+        api.proposals({ status: 'pending_review' }),
+        api.proposals({ status: 'reviewed' }),
+      ])
+      setPendingCount(pending.data.length)
+      setReviewedCount(reviewed.data.length)
+      setProposals(preferTab === 'pending' ? pending.data : reviewed.data)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载提案失败')
+    }
   }
 
-  useEffect(() => { reload() }, [])
+  useEffect(() => {
+    void reload(tab)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
 
-  const updateItem = (proposalId: string, tagId: string, patch: Partial<ItemEditState>) => {
+  const active = useMemo(() => proposals.find(p => p.id === activeId) ?? null, [proposals, activeId])
+
+  function openProposal(proposal: Proposal) {
+    setActiveId(proposal.id)
+    setItemEdits(buildItemEdits(proposal))
+    setComments(proposal.reviewerFeedback || '')
+    setError('')
+  }
+
+  function closeModal() {
+    setActiveId(null)
+    setItemEdits({})
+    setComments('')
+    setBusy(false)
+  }
+
+  const updateItem = (tagId: string, patch: Partial<ItemEditState>) => {
     setItemEdits(prev => ({
       ...prev,
-      [proposalId]: {
-        ...prev[proposalId],
-        [tagId]: { ...prev[proposalId]?.[tagId], ...patch } as ItemEditState,
-      },
+      [tagId]: { ...prev[tagId], ...patch } as ItemEditState,
     }))
   }
 
   async function decide(proposal: Proposal, approve: boolean) {
-    setBusy(proposal.id)
+    setBusy(true)
     setError('')
     try {
       const tagPayloads = proposal.tags.map(t => {
-        const edit = itemEdits[proposal.id]?.[t.id]
+        const edit = itemEdits[t.id]
         return {
           proposalTagId: t.id,
-          accepted: edit ? edit.accepted : true,
+          accepted: edit ? edit.accepted : (t.accepted ?? true),
           canonicalName: edit ? edit.canonicalName.trim() : t.canonicalName,
           description: edit ? edit.description.trim() : t.description,
           aliases: edit ? edit.aliases.split(',').map(s => s.trim()).filter(Boolean) : t.aliases,
         }
       })
-
       await api.decideProposal(proposal.id, {
         approve,
         version: proposal.version,
-        comments: comments[proposal.id] ?? '',
+        comments,
         tags: tagPayloads,
       })
-      reload()
+      closeModal()
+      await reload(tab)
     } catch (err) {
       setError(err instanceof Error ? err.message : '审核提交失败')
     } finally {
-      setBusy('')
+      setBusy(false)
     }
   }
 
+  const tabBtn = (key: ReviewTab, label: string, count: number) => (
+    <button
+      type="button"
+      key={key}
+      onClick={() => setTab(key)}
+      className={`rounded-lg px-3 py-1.5 text-sm font-semibold ${
+        tab === key ? 'bg-brand text-white' : 'bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50'
+      }`}
+    >
+      {label}
+      <span className={`ml-1.5 tabular-nums ${tab === key ? 'text-white/90' : 'text-slate-400'}`}>({count})</span>
+    </button>
+  )
+
   return (
-    <section className="space-y-5">
+    <section className="space-y-1">
       <PageHeader
         title="审核中心"
-        description="逐项采纳或忽略模型建议，可编辑规范名与别名。批准后写入标签库；驳回将带反馈重跑模型。"
+        description="待审提案按行浏览，点击后在弹窗中逐项采纳或忽略；已处理提案可只读查看。"
       />
-      {error && <Notice message={error} />}
+      <Toolbar>
+        <div className="inline-flex flex-wrap gap-2">
+          {tabBtn('pending', '待审核', pendingCount)}
+          {tabBtn('reviewed', '已处理', reviewedCount)}
+        </div>
+      </Toolbar>
 
-      <div className="space-y-5">
-        {proposals.map(proposal => {
-          const edits = itemEdits[proposal.id] ?? {}
-          const acceptedCount = proposal.tags.filter(t => (edits[t.id]?.accepted ?? t.accepted ?? true)).length
-          const readonly = proposal.status !== 'pending_review' && proposal.status !== 'pending'
+      {error && !active && <Notice message={error} />}
 
-          return (
-            <article key={proposal.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-semibold text-ink">提案 {proposal.id.slice(0, 8)}</p>
-                    <StatusBadge status={proposal.status} />
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500 sm:text-sm">
-                    {new Date(proposal.createdAt).toLocaleString()}
-                    {' · '}v{proposal.version}
-                    {' · '}
-                    <span className="tabular-nums">{proposal.tags.length}</span> 项建议
-                    {' · '}
-                    已采纳 <span className="tabular-nums font-medium text-emerald-700">{acceptedCount}</span>
-                  </p>
-                </div>
-              </div>
-
-              <div className={`px-4 py-4 sm:px-5 ${readonly ? 'pointer-events-none opacity-60' : ''}`}>
-                <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议</h3>
-                <div className="grid gap-3 xl:grid-cols-2">
-                  {proposal.tags.map(tag => {
-                    const edit = edits[tag.id] ?? {
-                      accepted: tag.accepted ?? true,
-                      canonicalName: tag.canonicalName,
-                      description: tag.description,
-                      aliases: tag.aliases.join(', '),
-                    }
-                    return (
-                      <div
-                        key={tag.id}
-                        className={`min-w-0 rounded-xl border p-3 sm:p-4 ${
-                          edit.accepted
-                            ? 'border-slate-200 bg-slate-50/40'
-                            : 'border-red-200 bg-red-50/40'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-xs font-semibold">
-                            <button
-                              type="button"
-                              title="Accept"
-                              onClick={() => updateItem(proposal.id, tag.id, { accepted: true })}
-                              className={`px-2.5 py-1 ${edit.accepted ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-                            >
-                              采纳
-                            </button>
-                            <button
-                              type="button"
-                              title="Reject item"
-                              onClick={() => updateItem(proposal.id, tag.id, { accepted: false })}
-                              className={`px-2.5 py-1 ${!edit.accepted ? 'bg-slate-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-                            >
-                              忽略
-                            </button>
-                          </div>
-                          <div className="flex items-center gap-2 text-xs text-slate-500">
-                            <span className="rounded bg-brand/10 px-2 py-0.5 font-semibold text-brand tabular-nums">
-                              {Math.round(tag.confidence * 100)}%
-                            </span>
-                            <span className="tabular-nums">覆盖 {tag.coveredEntryIds.length}</span>
-                          </div>
-                        </div>
-
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                          <Field label="规范名">
-                            <input
-                              disabled={!edit.accepted || readonly}
-                              className={`${inputClass} py-1.5 font-medium`}
-                              value={edit.canonicalName}
-                              onChange={e => updateItem(proposal.id, tag.id, { canonicalName: e.target.value })}
-                            />
-                          </Field>
-                          <Field label="别名">
-                            <input
-                              disabled={!edit.accepted || readonly}
-                              className={`${inputClass} py-1.5`}
-                              placeholder="逗号分隔"
-                              value={edit.aliases}
-                              onChange={e => updateItem(proposal.id, tag.id, { aliases: e.target.value })}
-                            />
-                          </Field>
-                          <Field label="描述" className="sm:col-span-2">
-                            <input
-                              disabled={!edit.accepted || readonly}
-                              className={`${inputClass} py-1.5`}
-                              value={edit.description}
-                              onChange={e => updateItem(proposal.id, tag.id, { description: e.target.value })}
-                            />
-                          </Field>
-                        </div>
-                        {tag.rationale && (
-                          <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500" title={tag.rationale}>
-                            理由：{tag.rationale}
-                          </p>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
-
-                <div className="mt-4">
-                  <Field label="审核意见 / 驳回反馈">
-                    <textarea
-                      disabled={readonly}
-                      className={`${inputClass} min-h-20`}
-                      placeholder="驳回时填写给模型的反馈，例如：请勿将开发与运营合并"
-                      value={comments[proposal.id] ?? ''}
-                      onChange={e => setComments({ ...comments, [proposal.id]: e.target.value })}
-                    />
-                  </Field>
-                </div>
-              </div>
-
-              {!readonly && (
-                <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-100 bg-white/95 px-4 py-3 backdrop-blur sm:flex-row sm:justify-end sm:px-5">
-                  <button
-                    disabled={busy === proposal.id}
-                    onClick={() => decide(proposal, false)}
-                    className={btnDanger}
-                  >
-                    {busy === proposal.id ? '提交中…' : '驳回重跑'}
-                  </button>
-                  <button
-                    disabled={busy === proposal.id}
-                    onClick={() => decide(proposal, true)}
-                    className={btnSuccess}
-                  >
-                    {busy === proposal.id ? '提交中…' : `批准提交（${acceptedCount}/${proposal.tags.length}）`}
-                  </button>
-                </div>
-              )}
-            </article>
-          )
-        })}
-
-        {proposals.length === 0 && (
+      <div className="mt-5">
+        {proposals.length === 0 ? (
           <EmptyState
-            title="暂无待审核提案"
-            description="候选池达到阈值、worker 成功调用模型后，提案会出现在这里。"
+            title={tab === 'pending' ? '暂无待审核提案' : '暂无已处理提案'}
+            description={
+              tab === 'pending'
+                ? '候选池达到阈值或手动归并后，worker 生成的提案会出现在这里。'
+                : '批准或驳回后的提案会显示在此，便于回溯。'
+            }
           />
+        ) : (
+          <TableShell>
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="p-3 font-medium">提案</th>
+                  <th className="p-3 font-medium">状态</th>
+                  <th className="p-3 font-medium">建议数</th>
+                  <th className="p-3 font-medium">采纳</th>
+                  <th className="hidden p-3 font-medium md:table-cell">时间</th>
+                  <th className="p-3 font-medium">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proposals.map(proposal => (
+                  <tr
+                    key={proposal.id}
+                    className="cursor-pointer border-t hover:bg-slate-50/80"
+                    onClick={() => openProposal(proposal)}
+                  >
+                    <td className="p-3 font-semibold text-ink">
+                      提案 <span className="font-mono text-xs sm:text-sm">{proposal.id.slice(0, 8)}</span>
+                      <span className="ml-2 text-xs font-normal text-slate-400">v{proposal.version}</span>
+                    </td>
+                    <td className="p-3"><StatusBadge status={proposal.status} /></td>
+                    <td className="p-3 tabular-nums">{proposal.tags.length}</td>
+                    <td className="p-3 tabular-nums text-slate-600">{acceptedSummary(proposal)}</td>
+                    <td className="hidden p-3 text-slate-500 md:table-cell">{new Date(proposal.createdAt).toLocaleString()}</td>
+                    <td className="p-3">
+                      <button
+                        type="button"
+                        className="text-sm font-semibold text-brand hover:underline"
+                        onClick={e => { e.stopPropagation(); openProposal(proposal) }}
+                      >
+                        {isPendingProposal(proposal.status) ? '审核' : '查看'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableShell>
         )}
       </div>
+
+      {active && (
+        <ProposalModal
+          proposal={active}
+          readonly={!isPendingProposal(active.status)}
+          busy={busy}
+          error={error}
+          comments={comments}
+          itemEdits={itemEdits}
+          onComments={setComments}
+          onUpdateItem={updateItem}
+          onClose={closeModal}
+          onDecide={approve => void decide(active, approve)}
+        />
+      )}
     </section>
+  )
+}
+
+function ProposalModal({
+  proposal,
+  readonly,
+  busy,
+  error,
+  comments,
+  itemEdits,
+  onComments,
+  onUpdateItem,
+  onClose,
+  onDecide,
+}: {
+  proposal: Proposal
+  readonly: boolean
+  busy: boolean
+  error: string
+  comments: string
+  itemEdits: Record<string, ItemEditState>
+  onComments: (value: string) => void
+  onUpdateItem: (tagId: string, patch: Partial<ItemEditState>) => void
+  onClose: () => void
+  onDecide: (approve: boolean) => void
+}) {
+  const acceptedCount = proposal.tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
+
+  return (
+    <Modal onClose={onClose} wide title={`提案 ${proposal.id.slice(0, 8)}`}>
+      <div className="space-y-4 px-5 py-4">
+        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
+          <StatusBadge status={proposal.status} />
+          <span>{new Date(proposal.createdAt).toLocaleString()}</span>
+          <span>· v{proposal.version}</span>
+          <span>· <span className="tabular-nums">{proposal.tags.length}</span> 项建议</span>
+          <span>· 已采纳 <span className="tabular-nums font-medium text-emerald-700">{acceptedCount}</span></span>
+        </div>
+
+        {error && <Notice message={error} />}
+
+        <div className={readonly ? 'pointer-events-none opacity-70' : ''}>
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议</h3>
+          <div className="grid gap-3 xl:grid-cols-2">
+            {proposal.tags.map(tag => {
+              const edit = itemEdits[tag.id] ?? {
+                accepted: tag.accepted ?? true,
+                canonicalName: tag.canonicalName,
+                description: tag.description,
+                aliases: tag.aliases.join(', '),
+              }
+              return (
+                <div
+                  key={tag.id}
+                  className={`min-w-0 rounded-xl border p-3 sm:p-4 ${
+                    edit.accepted ? 'border-slate-200 bg-slate-50/40' : 'border-red-200 bg-red-50/40'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-xs font-semibold">
+                      <button
+                        type="button"
+                        title="采纳"
+                        disabled={readonly}
+                        onClick={() => onUpdateItem(tag.id, { accepted: true })}
+                        className={`px-2.5 py-1 ${edit.accepted ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        采纳
+                      </button>
+                      <button
+                        type="button"
+                        title="忽略"
+                        disabled={readonly}
+                        onClick={() => onUpdateItem(tag.id, { accepted: false })}
+                        className={`px-2.5 py-1 ${!edit.accepted ? 'bg-slate-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                      >
+                        忽略
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span className="rounded bg-brand/10 px-2 py-0.5 font-semibold text-brand tabular-nums">
+                        {Math.round(tag.confidence * 100)}%
+                      </span>
+                      <span className="tabular-nums">覆盖 {tag.coveredEntryIds.length}</span>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <Field label="规范名">
+                      <input
+                        disabled={!edit.accepted || readonly}
+                        className={`${inputClass} py-1.5 font-medium`}
+                        value={edit.canonicalName}
+                        onChange={e => onUpdateItem(tag.id, { canonicalName: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="别名">
+                      <input
+                        disabled={!edit.accepted || readonly}
+                        className={`${inputClass} py-1.5`}
+                        placeholder="逗号分隔"
+                        value={edit.aliases}
+                        onChange={e => onUpdateItem(tag.id, { aliases: e.target.value })}
+                      />
+                    </Field>
+                    <Field label="描述" className="sm:col-span-2">
+                      <input
+                        disabled={!edit.accepted || readonly}
+                        className={`${inputClass} py-1.5`}
+                        value={edit.description}
+                        onChange={e => onUpdateItem(tag.id, { description: e.target.value })}
+                      />
+                    </Field>
+                  </div>
+                  {tag.rationale && (
+                    <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500" title={tag.rationale}>
+                      理由：{tag.rationale}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="mt-4">
+            <Field label={readonly ? '审核意见' : '审核意见 / 驳回反馈'}>
+              <textarea
+                disabled={readonly}
+                className={`${inputClass} min-h-20`}
+                placeholder="驳回时填写给模型的反馈，例如：请勿将开发与运营合并"
+                value={comments}
+                onChange={e => onComments(e.target.value)}
+              />
+            </Field>
+          </div>
+        </div>
+      </div>
+
+      {!readonly && (
+        <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-100 bg-white px-5 py-3 sm:flex-row sm:justify-end">
+          <button type="button" disabled={busy} onClick={onClose} className={btnSecondary}>取消</button>
+          <button type="button" disabled={busy} onClick={() => onDecide(false)} className={btnDanger}>
+            {busy ? '提交中…' : '驳回重跑'}
+          </button>
+          <button type="button" disabled={busy} onClick={() => onDecide(true)} className={btnSuccess}>
+            {busy ? '提交中…' : `批准提交（${acceptedCount}/${proposal.tags.length}）`}
+          </button>
+        </div>
+      )}
+    </Modal>
   )
 }

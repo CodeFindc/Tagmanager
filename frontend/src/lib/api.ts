@@ -41,7 +41,10 @@ export const api = {
   pool: (namespaceId: string) => request<{ data: PoolEntry[]; threshold: number }>(`/candidate-pools/${namespaceId}/entries`),
   triggerConsolidation: (namespaceId: string) => request<ConsolidationTriggerResult>(`/candidate-pools/${namespaceId}/consolidate`, { method: 'POST' }),
   importTags: (payload: { namespaceId: string; sourceName: string; tags: string[]; initialSeed: boolean }) => request<ImportResult>('/imports', { method: 'POST', headers: { 'Idempotency-Key': createIdempotencyKey() }, body: JSON.stringify(payload) }),
-  proposals: () => request<{ data: Proposal[] }>('/review/proposals'),
+  proposals: (params?: { status?: string }) => {
+    const q = params?.status ? `?status=${encodeURIComponent(params.status)}` : ''
+    return request<{ data: Proposal[] }>(`/review/proposals${q}`)
+  },
   decideProposal: (proposalId: string, payload: { approve: boolean; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),
   users: () => request<{ data: User[] }>('/users'),
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),

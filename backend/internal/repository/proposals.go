@@ -10,12 +10,33 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Store) ListProposals(ctx context.Context, proposalID string) ([]domain.Proposal, error) {
+// ListProposals returns proposals ordered by created_at DESC.
+// proposalID, when set, returns that single proposal.
+// statusFilter: "", "pending_review", "approved", "rejected", or "reviewed" (approved+rejected).
+func (s *Store) ListProposals(ctx context.Context, proposalID, statusFilter string) ([]domain.Proposal, error) {
 	query := `SELECT id,namespace_id,pool_window_id,status,version,reviewer_feedback,created_at FROM consolidation_proposals`
 	args := []any{}
+	where := []string{}
 	if proposalID != "" {
-		query += ` WHERE id=$1`
 		args = append(args, proposalID)
+		where = append(where, fmt.Sprintf("id=$%d", len(args)))
+	}
+	switch strings.TrimSpace(statusFilter) {
+	case "":
+		// all statuses
+	case "pending_review", "pending":
+		where = append(where, `status='pending_review'`)
+	case "approved":
+		where = append(where, `status='approved'`)
+	case "rejected":
+		where = append(where, `status='rejected'`)
+	case "reviewed":
+		where = append(where, `status IN ('approved','rejected')`)
+	default:
+		return nil, fmt.Errorf("invalid status filter %q (use pending_review, approved, rejected, reviewed)", statusFilter)
+	}
+	if len(where) > 0 {
+		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	query += ` ORDER BY created_at DESC`
 	rows, err := s.pool.Query(ctx, query, args...)
