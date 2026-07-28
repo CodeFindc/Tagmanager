@@ -67,7 +67,7 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 	if job.ParentProposalID != nil {
 		_ = w.pool.QueryRow(ctx, `SELECT COALESCE(reviewer_feedback,'') FROM consolidation_proposals WHERE id=$1`, *job.ParentProposalID).Scan(&feedback)
 	}
-	if _, err = w.pool.Exec(ctx, `UPDATE pool_windows SET status='generating',updated_at=now() WHERE id=$1`, job.WindowID); err != nil {
+	if _, err = w.pool.Exec(ctx, `UPDATE pool_windows SET status='generating'::pool_window_status,updated_at=now() WHERE id=$1`, job.WindowID); err != nil {
 		return w.fail(ctx, job.ID, job.WindowID, err)
 	}
 	var entries []llm.InputEntry
@@ -91,7 +91,7 @@ func (w *Worker) claim(ctx context.Context) (claimedJob, bool, error) {
 	}
 	defer tx.Rollback(ctx)
 	var job claimedJob
-	err = tx.QueryRow(ctx, `WITH next AS (SELECT id FROM consolidation_jobs WHERE status IN ('queued','retryable_failed') AND run_after<=now() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE consolidation_jobs j SET status='running',attempt=attempt+1,started_at=now() FROM next WHERE j.id=next.id RETURNING j.id,j.namespace_id,j.pool_window_id,j.job_type,j.parent_proposal_id`).Scan(&job.ID, &job.NamespaceID, &job.WindowID, &job.JobType, &job.ParentProposalID)
+	err = tx.QueryRow(ctx, `WITH next AS (SELECT id FROM consolidation_jobs WHERE status IN ('queued'::job_status,'retryable_failed'::job_status) AND run_after<=now() ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) UPDATE consolidation_jobs j SET status='running'::job_status,attempt=attempt+1,started_at=now() FROM next WHERE j.id=next.id RETURNING j.id,j.namespace_id,j.pool_window_id,j.job_type,j.parent_proposal_id`).Scan(&job.ID, &job.NamespaceID, &job.WindowID, &job.JobType, &job.ParentProposalID)
 	if err == pgx.ErrNoRows {
 		return claimedJob{}, false, tx.Commit(ctx)
 	}
@@ -132,12 +132,16 @@ func determineFailStatus(attempt, maxAttempts int) string {
 }
 
 func (w *Worker) fail(ctx context.Context, jobID, windowID string, cause error) error {
-	_, err := w.pool.Exec(ctx, `UPDATE consolidation_jobs SET status=CASE WHEN attempt >= $3 THEN 'failed' ELSE 'retryable_failed' END,error_message=$2,run_after=now()+LEAST(300, (2 ^ LEAST(attempt, 10)) * 10) * interval '1 second',completed_at=now() WHERE id=$1`, jobID, cause.Error(), w.maxAttempts)
+	// CASE bare string literals type as text; PostgreSQL will not assign text to job_status without an explicit cast.
+	_, err := w.pool.Exec(ctx, `UPDATE consolidation_jobs SET status=(CASE WHEN attempt >= $3 THEN 'failed' ELSE 'retryable_failed' END)::job_status,error_message=$2,run_after=now()+LEAST(300, (2 ^ LEAST(attempt, 10)) * 10) * interval '1 second',completed_at=now() WHERE id=$1`, jobID, cause.Error(), w.maxAttempts)
 	if err != nil {
-		return err
+		return fmt.Errorf("mark job failed after %v: %w", cause, err)
 	}
-	_, err = w.pool.Exec(ctx, `UPDATE pool_windows SET status='failed',updated_at=now() WHERE id=$1`, windowID)
-	return err
+	if _, err = w.pool.Exec(ctx, `UPDATE pool_windows SET status='failed'::pool_window_status,updated_at=now() WHERE id=$1`, windowID); err != nil {
+		return fmt.Errorf("mark window failed after %v: %w", cause, err)
+	}
+	// Keep the original processing error so Run() logs the root cause, not a nil success from status bookkeeping.
+	return cause
 }
 
 func (w *Worker) persistProposal(ctx context.Context, jobID, namespaceID, windowID string, output domain.ConsolidationOutput) error {
@@ -162,10 +166,10 @@ func (w *Worker) persistProposal(ctx context.Context, jobID, namespaceID, window
 			}
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE consolidation_jobs SET status='succeeded',completed_at=now() WHERE id=$1`, jobID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE consolidation_jobs SET status='succeeded'::job_status,completed_at=now() WHERE id=$1`, jobID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE pool_windows SET status='awaiting_review',updated_at=now() WHERE id=$1`, windowID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE pool_windows SET status='awaiting_review'::pool_window_status,updated_at=now() WHERE id=$1`, windowID); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
