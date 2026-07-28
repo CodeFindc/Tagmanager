@@ -97,7 +97,7 @@ export function App() {
             <Route path="/" element={<Dashboard isAdmin={user.role === 'admin'} />} />
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/imports" element={<ImportPage />} />
-            <Route path="/pool" element={<PoolPage />} />
+            <Route path="/pool" element={<PoolPage canTrigger={user.role === 'admin'} />} />
             <Route path="/review" element={<ReviewPage />} />
             {user.role === 'admin' && <Route path="/namespaces" element={<NamespacesPage />} />}
             {user.role === 'admin' && <Route path="/users" element={<UsersPage />} />}
@@ -616,20 +616,72 @@ function ImportPage() {
   )
 }
 
-function PoolPage() {
+function PoolPage({ canTrigger }: { canTrigger: boolean }) {
   const { items: namespaces } = useNamespaces()
   const [namespaceId, setNamespaceId] = useState('')
   const [items, setItems] = useState<PoolEntry[]>([])
   const [threshold, setThreshold] = useState(0)
-  useEffect(() => { if (namespaceId) api.pool(namespaceId).then(x => { setItems(x.data); setThreshold(x.threshold) }) }, [namespaceId])
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [triggering, setTriggering] = useState(false)
+
+  const reload = (id: string) => {
+    api.pool(id).then(x => { setItems(x.data); setThreshold(x.threshold) }).catch(err => setError(err instanceof Error ? err.message : '加载候选池失败'))
+  }
+  useEffect(() => {
+    setError('')
+    setMessage('')
+    if (namespaceId) reload(namespaceId)
+    else { setItems([]); setThreshold(0) }
+  }, [namespaceId])
+
   const progress = useMemo(() => threshold ? Math.min(100, Math.round(items.length / threshold * 100)) : 0, [items, threshold])
+
+  async function triggerNow() {
+    if (!namespaceId || items.length === 0) return
+    setError('')
+    setMessage('')
+    setTriggering(true)
+    try {
+      const result = await api.triggerConsolidation(namespaceId)
+      const tone =
+        result.consolidationStatus === 'created' || result.consolidationStatus === 'reclaimed'
+          ? '已触发'
+          : result.consolidationStatus === 'already_active'
+            ? '未新建'
+            : '状态'
+      setMessage(`${tone}：${result.consolidationMessage}${result.jobId ? `（jobId: ${result.jobId}）` : ''}`)
+      reload(namespaceId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '手动触发失败')
+    } finally {
+      setTriggering(false)
+    }
+  }
 
   return (
     <section className="space-y-1">
-      <PageHeader title="候选池" description="达到阈值时冻结当前集合，模型只处理冻结快照，避免新数据扰动审核。" />
+      <PageHeader
+        title="候选池"
+        description="达到阈值时自动冻结；也可在未达阈值时手动触发归并。模型只处理冻结快照，避免新数据扰动审核。"
+      />
       <Toolbar>
         <NamespacePicker value={namespaceId} onChange={setNamespaceId} namespaces={namespaces} />
+        {canTrigger && namespaceId && (
+          <button
+            type="button"
+            disabled={triggering || items.length === 0}
+            onClick={() => void triggerNow()}
+            className={btnPrimary}
+            title={items.length === 0 ? '当前无开放候选' : '不等阈值，立即冻结并投递汇总任务'}
+          >
+            {triggering ? '触发中…' : '立即归并'}
+          </button>
+        )}
       </Toolbar>
+
+      {error && <Notice message={error} />}
+      {message && <SuccessNotice message={message} />}
 
       {namespaceId && (
         <div className="mt-5 space-y-5">
@@ -641,6 +693,9 @@ function PoolPage() {
             <div className="mt-3 h-2 overflow-hidden rounded bg-slate-100">
               <div className="h-full rounded bg-brand transition-all" style={{ width: `${progress}%` }} />
             </div>
+            {canTrigger && items.length > 0 && items.length < threshold && (
+              <p className="mt-3 text-xs text-slate-500">尚未达到自动阈值，可点「立即归并」用当前开放候选创建汇总任务。</p>
+            )}
           </Panel>
 
           <TableShell>

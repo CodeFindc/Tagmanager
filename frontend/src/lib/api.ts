@@ -1,4 +1,4 @@
-import type { ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from '../types/api'
+import type { ConsolidationTriggerResult, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -39,6 +39,7 @@ export const api = {
   createNamespace: (payload: { name: string; description: string; candidateThreshold: number }) => request<Namespace>('/namespaces', { method: 'POST', body: JSON.stringify(payload) }),
   tags: (namespaceId: string, q = '') => request<{ data: Tag[] }>(`/tags?namespaceId=${encodeURIComponent(namespaceId)}&q=${encodeURIComponent(q)}`),
   pool: (namespaceId: string) => request<{ data: PoolEntry[]; threshold: number }>(`/candidate-pools/${namespaceId}/entries`),
+  triggerConsolidation: (namespaceId: string) => request<ConsolidationTriggerResult>(`/candidate-pools/${namespaceId}/consolidate`, { method: 'POST' }),
   importTags: (payload: { namespaceId: string; sourceName: string; tags: string[]; initialSeed: boolean }) => request<ImportResult>('/imports', { method: 'POST', headers: { 'Idempotency-Key': createIdempotencyKey() }, body: JSON.stringify(payload) }),
   proposals: () => request<{ data: Proposal[] }>('/review/proposals'),
   decideProposal: (proposalId: string, payload: { approve: boolean; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),

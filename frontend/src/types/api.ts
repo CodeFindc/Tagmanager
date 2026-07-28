@@ -16,5 +16,12 @@ export interface ImportResult {
   consolidationStatus?: 'created' | 'already_active' | 'reclaimed' | 'not_triggered' | string
   consolidationMessage?: string
 }
+export interface ConsolidationTriggerResult {
+  jobId?: string
+  openCandidates: number
+  threshold: number
+  consolidationStatus: 'created' | 'already_active' | 'reclaimed' | string
+  consolidationMessage: string
+}
 export interface ProposalTag { id: string; canonicalName: string; description: string; aliases: string[]; rationale: string; confidence: number; coveredEntryIds: string[]; accepted?: boolean }
 export interface Proposal { id: string; namespaceId: string; poolWindowId: string; status: string; version: number; reviewerFeedback: string; createdAt: string; tags: ProposalTag[] }

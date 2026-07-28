@@ -225,6 +225,59 @@ func (s *Store) ImportTags(ctx context.Context, namespaceID, idempotencyKey, sou
 	return result, tx.Commit(ctx)
 }
 
+// TriggerConsolidation freezes the current open candidate pool for a namespace and
+// enqueues a consolidation job without waiting for the threshold. Used by the
+// manual "run consolidation now" control. Empty open pools are rejected.
+func (s *Store) TriggerConsolidation(ctx context.Context, namespaceID, actorID string) (domain.ConsolidationTriggerResult, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.ConsolidationTriggerResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var threshold, count int
+	if err = tx.QueryRow(ctx, `SELECT candidate_threshold FROM tag_namespaces WHERE id=$1`, namespaceID).Scan(&threshold); err != nil {
+		if err == pgx.ErrNoRows {
+			return domain.ConsolidationTriggerResult{}, fmt.Errorf("namespace not found")
+		}
+		return domain.ConsolidationTriggerResult{}, err
+	}
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM candidate_pool_entries WHERE namespace_id=$1 AND resolved_at IS NULL`, namespaceID).Scan(&count); err != nil {
+		return domain.ConsolidationTriggerResult{}, err
+	}
+	if count == 0 {
+		return domain.ConsolidationTriggerResult{}, fmt.Errorf("no open candidates to consolidate")
+	}
+
+	snapshot, buildErr := s.poolSnapshotTx(ctx, tx, namespaceID)
+	if buildErr != nil {
+		return domain.ConsolidationTriggerResult{}, buildErr
+	}
+	jobID, status, message, consErr := s.enqueueConsolidation(ctx, tx, namespaceID, threshold, "manual", "pool_window", snapshot)
+	if consErr != nil {
+		return domain.ConsolidationTriggerResult{}, consErr
+	}
+
+	data, _ := json.Marshal(map[string]any{
+		"status":         status,
+		"jobId":          jobID,
+		"openCandidates": count,
+		"threshold":      threshold,
+	})
+	if _, err = tx.Exec(ctx, `INSERT INTO audit_logs(actor_id,action,entity_type,entity_id,data) VALUES($1,'consolidation.manual_trigger','tag_namespace',$2,$3)`, actorID, namespaceID, data); err != nil {
+		return domain.ConsolidationTriggerResult{}, err
+	}
+
+	result := domain.ConsolidationTriggerResult{
+		JobID:                jobID,
+		OpenCandidates:       count,
+		Threshold:            threshold,
+		ConsolidationStatus:  status,
+		ConsolidationMessage: message,
+	}
+	return result, tx.Commit(ctx)
+}
+
 // enqueueConsolidation freezes a pool window and enqueues a job.
 // If an active window already blocks the partial unique index, it reclaims stale
 // running/failed work when safe, otherwise reports already_active with the existing job id.

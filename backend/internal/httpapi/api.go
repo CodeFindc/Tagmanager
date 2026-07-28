@@ -47,6 +47,7 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Post("/namespaces", api.require(domain.RoleAdmin, api.createNamespace))
 			r.Get("/tags", api.listTags)
 			r.Get("/candidate-pools/{namespaceID}/entries", api.listPool)
+			r.Post("/candidate-pools/{namespaceID}/consolidate", api.require(domain.RoleAdmin, api.triggerConsolidation))
 			r.Post("/imports", api.require(domain.RoleAdmin, api.importTags))
 			r.Get("/review/proposals", api.listProposals)
 			r.Get("/review/proposals/{proposalID}", api.getProposal)
@@ -148,6 +149,23 @@ func (a *API) listPool(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 200, map[string]any{"data": items, "threshold": threshold})
+}
+func (a *API) triggerConsolidation(w http.ResponseWriter, r *http.Request) {
+	result, err := a.store.TriggerConsolidation(r.Context(), chi.URLParam(r, "namespaceID"), currentUser(r).ID)
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "namespace not found") {
+			respondError(w, http.StatusNotFound, msg)
+			return
+		}
+		if strings.Contains(msg, "no open candidates") {
+			respondError(w, http.StatusBadRequest, msg)
+			return
+		}
+		respondError(w, http.StatusBadRequest, msg)
+		return
+	}
+	respond(w, http.StatusOK, result)
 }
 func (a *API) importTags(w http.ResponseWriter, r *http.Request) {
 	var body struct {

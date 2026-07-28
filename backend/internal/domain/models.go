@@ -51,6 +51,15 @@ type ImportResult struct {
 	ConsolidationMessage string `json:"consolidationMessage,omitempty"`
 }
 
+// ConsolidationTriggerResult is returned by manual (and similar) consolidation triggers.
+type ConsolidationTriggerResult struct {
+	JobID                string `json:"jobId,omitempty"`
+	OpenCandidates       int    `json:"openCandidates"`
+	Threshold            int    `json:"threshold"`
+	ConsolidationStatus  string `json:"consolidationStatus"` // created | already_active | reclaimed
+	ConsolidationMessage string `json:"consolidationMessage"`
+}
+
 type PoolEntry struct {
 	ID              string    `json:"id"`
 	NamespaceID     string    `json:"namespaceId"`
