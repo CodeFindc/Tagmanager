@@ -48,6 +48,8 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Get("/tags", api.listTags)
 			r.Get("/candidate-pools/{namespaceID}/entries", api.listPool)
 			r.Post("/candidate-pools/{namespaceID}/consolidate", api.require(domain.RoleAdmin, api.triggerConsolidation))
+			r.Get("/consolidation-jobs", api.listConsolidationJobs)
+			r.Get("/consolidation-jobs/{jobID}", api.getConsolidationJob)
 			r.Post("/imports", api.require(domain.RoleAdmin, api.importTags))
 			r.Get("/review/proposals", api.listProposals)
 			r.Get("/review/proposals/{proposalID}", api.getProposal)
@@ -166,6 +168,32 @@ func (a *API) triggerConsolidation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, result)
+}
+func (a *API) listConsolidationJobs(w http.ResponseWriter, r *http.Request) {
+	namespaceID := strings.TrimSpace(r.URL.Query().Get("namespaceId"))
+	if namespaceID == "" {
+		respondError(w, http.StatusBadRequest, "namespaceId is required")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	items, err := a.store.ListConsolidationJobs(r.Context(), namespaceID, limit)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"data": items})
+}
+func (a *API) getConsolidationJob(w http.ResponseWriter, r *http.Request) {
+	item, err := a.store.GetConsolidationJob(r.Context(), chi.URLParam(r, "jobID"))
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			respondError(w, http.StatusNotFound, "job not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, item)
 }
 func (a *API) importTags(w http.ResponseWriter, r *http.Request) {
 	var body struct {

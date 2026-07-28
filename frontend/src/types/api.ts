@@ -23,5 +23,25 @@ export interface ConsolidationTriggerResult {
   consolidationStatus: 'created' | 'already_active' | 'reclaimed' | string
   consolidationMessage: string
 }
+export interface ConsolidationJob {
+  id: string
+  namespaceId: string
+  jobType: string
+  status: string
+  attempt: number
+  errorMessage: string
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+  runAfter: string
+  poolWindowId?: string
+  windowStatus?: string
+  triggerReason?: string
+  threshold?: number
+  snapshotCount: number
+  proposalId?: string
+  proposalStatus?: string
+  parentProposalId?: string
+}
 export interface ProposalTag { id: string; canonicalName: string; description: string; aliases: string[]; rationale: string; confidence: number; coveredEntryIds: string[]; accepted?: boolean }
 export interface Proposal { id: string; namespaceId: string; poolWindowId: string; status: string; version: number; reviewerFeedback: string; createdAt: string; tags: ProposalTag[] }

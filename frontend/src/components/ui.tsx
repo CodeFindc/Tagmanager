@@ -53,23 +53,26 @@ export function EmptyState({ title, description }: { title: string; description?
   )
 }
 
+const STATUS_META: Record<string, { label: string; tone: string }> = {
+  pending_review: { label: '待审核', tone: 'bg-amber-100 text-amber-800' },
+  pending: { label: '待处理', tone: 'bg-amber-100 text-amber-800' },
+  approved: { label: '已批准', tone: 'bg-emerald-100 text-emerald-800' },
+  rejected: { label: '已驳回', tone: 'bg-red-100 text-red-800' },
+  succeeded: { label: '成功', tone: 'bg-emerald-100 text-emerald-800' },
+  failed: { label: '失败', tone: 'bg-red-100 text-red-800' },
+  queued: { label: '排队中', tone: 'bg-slate-100 text-slate-700' },
+  running: { label: '运行中', tone: 'bg-sky-100 text-sky-800' },
+  retryable_failed: { label: '可重试失败', tone: 'bg-amber-100 text-amber-800' },
+  frozen: { label: '已冻结', tone: 'bg-slate-100 text-slate-700' },
+  generating: { label: '生成中', tone: 'bg-sky-100 text-sky-800' },
+  awaiting_review: { label: '待审核', tone: 'bg-amber-100 text-amber-800' },
+}
+
 export function StatusBadge({ status }: { status: string }) {
-  const tone =
-    status === 'pending_review' || status === 'pending'
-      ? 'bg-amber-100 text-amber-800'
-      : status === 'approved' || status === 'succeeded'
-        ? 'bg-emerald-100 text-emerald-800'
-        : status === 'rejected' || status === 'failed'
-          ? 'bg-red-100 text-red-800'
-          : 'bg-slate-100 text-slate-700'
-  const label =
-    status === 'pending_review' ? '待审核'
-      : status === 'approved' ? '已批准'
-        : status === 'rejected' ? '已驳回'
-          : status
+  const meta = STATUS_META[status] ?? { label: status, tone: 'bg-slate-100 text-slate-700' }
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${tone}`}>
-      {label}
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${meta.tone}`}>
+      {meta.label}
     </span>
   )
 }

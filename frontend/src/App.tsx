@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
-import type { ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from './types/api'
+import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from './types/api'
 import {
   EmptyState,
   Field,
@@ -617,26 +617,73 @@ function ImportPage() {
   )
 }
 
+function jobTypeLabel(job: ConsolidationJob) {
+  if (job.jobType === 'rework' || job.parentProposalId) return '重跑'
+  if (job.jobType === 'initial_seed' || job.triggerReason === 'initial_seed') return '首批'
+  if (job.triggerReason === 'manual') return '手动'
+  if (job.triggerReason === 'threshold') return '阈值'
+  if (job.jobType === 'pool_window') return '归并'
+  return job.jobType || '—'
+}
+
+function isActiveJobStatus(status: string) {
+  return status === 'queued' || status === 'running' || status === 'retryable_failed'
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return '—'
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? value : d.toLocaleString()
+}
+
 function PoolPage({ canTrigger }: { canTrigger: boolean }) {
   const { items: namespaces } = useNamespaces()
   const [namespaceId, setNamespaceId] = useState('')
   const [items, setItems] = useState<PoolEntry[]>([])
+  const [jobs, setJobs] = useState<ConsolidationJob[]>([])
   const [threshold, setThreshold] = useState(0)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [triggering, setTriggering] = useState(false)
+  const [activeJobId, setActiveJobId] = useState<string | null>(null)
 
-  const reload = (id: string) => {
+  const reloadPool = (id: string) => {
     api.pool(id).then(x => { setItems(x.data); setThreshold(x.threshold) }).catch(err => setError(err instanceof Error ? err.message : '加载候选池失败'))
   }
+
+  const reloadJobs = (id: string) => {
+    api.consolidationJobs(id)
+      .then(x => setJobs(x.data))
+      .catch(err => setError(err instanceof Error ? err.message : '加载归并任务失败'))
+  }
+
   useEffect(() => {
     setError('')
     setMessage('')
-    if (namespaceId) reload(namespaceId)
-    else { setItems([]); setThreshold(0) }
+    setActiveJobId(null)
+    if (namespaceId) {
+      reloadPool(namespaceId)
+      reloadJobs(namespaceId)
+    } else {
+      setItems([])
+      setJobs([])
+      setThreshold(0)
+    }
   }, [namespaceId])
 
+  const hasActiveJobs = useMemo(() => jobs.some(j => isActiveJobStatus(j.status)), [jobs])
+
+  useEffect(() => {
+    if (!namespaceId || !hasActiveJobs) return
+    const timer = window.setInterval(() => {
+      reloadJobs(namespaceId)
+      reloadPool(namespaceId)
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [namespaceId, hasActiveJobs])
+
   const progress = useMemo(() => threshold ? Math.min(100, Math.round(items.length / threshold * 100)) : 0, [items, threshold])
+  const activeJob = useMemo(() => jobs.find(j => j.id === activeJobId) ?? null, [jobs, activeJobId])
 
   async function triggerNow() {
     if (!namespaceId || items.length === 0) return
@@ -652,7 +699,8 @@ function PoolPage({ canTrigger }: { canTrigger: boolean }) {
             ? '未新建'
             : '状态'
       setMessage(`${tone}：${result.consolidationMessage}${result.jobId ? `（jobId: ${result.jobId}）` : ''}`)
-      reload(namespaceId)
+      reloadPool(namespaceId)
+      reloadJobs(namespaceId)
     } catch (err) {
       setError(err instanceof Error ? err.message : '手动触发失败')
     } finally {
@@ -715,7 +763,7 @@ function PoolPage({ canTrigger }: { canTrigger: boolean }) {
                     <td className="p-3 font-medium">{item.normalizedName}</td>
                     <td className="max-w-[200px] truncate p-3" title={item.rawSample}>{item.rawSample}</td>
                     <td className="p-3 tabular-nums">{item.occurrenceCount}</td>
-                    <td className="hidden p-3 text-slate-500 md:table-cell">{new Date(item.lastSeenAt).toLocaleString()}</td>
+                    <td className="hidden p-3 text-slate-500 md:table-cell">{formatDateTime(item.lastSeenAt)}</td>
                   </tr>
                 ))}
                 {items.length === 0 && (
@@ -726,7 +774,147 @@ function PoolPage({ canTrigger }: { canTrigger: boolean }) {
               </tbody>
             </table>
           </TableShell>
+
+          <div>
+            <h2 className="mb-3 text-sm font-semibold text-ink">本域归并任务</h2>
+            {jobs.length === 0 ? (
+              <EmptyState title="本域暂无归并任务" description="阈值触发、首批种子或手动「立即归并」后，运行记录会出现在这里。" />
+            ) : (
+              <TableShell>
+                <table className="w-full min-w-[720px] text-left text-sm">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="p-3 font-medium">时间</th>
+                      <th className="p-3 font-medium">类型</th>
+                      <th className="p-3 font-medium">任务状态</th>
+                      <th className="p-3 font-medium">窗口</th>
+                      <th className="p-3 font-medium">候选数</th>
+                      <th className="p-3 font-medium">尝试</th>
+                      <th className="p-3 font-medium">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobs.map(job => (
+                      <tr
+                        key={job.id}
+                        className="cursor-pointer border-t hover:bg-slate-50/80"
+                        onClick={() => setActiveJobId(job.id)}
+                      >
+                        <td className="p-3 text-slate-600">{formatDateTime(job.createdAt)}</td>
+                        <td className="p-3 font-medium">{jobTypeLabel(job)}</td>
+                        <td className="p-3"><StatusBadge status={job.status} /></td>
+                        <td className="p-3">{job.windowStatus ? <StatusBadge status={job.windowStatus} /> : <span className="text-slate-400">—</span>}</td>
+                        <td className="p-3 tabular-nums">{job.snapshotCount}</td>
+                        <td className="p-3 tabular-nums">{job.attempt}</td>
+                        <td className="p-3">
+                          <button
+                            type="button"
+                            className="text-sm font-semibold text-brand hover:underline"
+                            onClick={e => { e.stopPropagation(); setActiveJobId(job.id) }}
+                          >
+                            查看
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableShell>
+            )}
+          </div>
         </div>
+      )}
+
+      {activeJob && (
+        <Modal title={`归并任务 ${activeJob.id.slice(0, 8)}`} onClose={() => setActiveJobId(null)} wide>
+          <div className="space-y-5 p-5">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">任务 ID</p>
+                <p className="mt-1 break-all font-mono text-xs text-ink">{activeJob.id}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">类型 / 触发</p>
+                <p className="mt-1 font-medium text-ink">
+                  {jobTypeLabel(activeJob)}
+                  {activeJob.triggerReason ? <span className="ml-2 text-xs font-normal text-slate-500">({activeJob.triggerReason})</span> : null}
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">任务状态</p>
+                <div className="mt-1"><StatusBadge status={activeJob.status} /></div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">窗口状态</p>
+                <div className="mt-1">
+                  {activeJob.windowStatus ? <StatusBadge status={activeJob.windowStatus} /> : <span className="text-slate-400">—</span>}
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">快照候选数</p>
+                <p className="mt-1 tabular-nums font-medium">{activeJob.snapshotCount}</p>
+              </div>
+              <div className="rounded-lg border border-slate-100 bg-slate-50 p-3 text-sm">
+                <p className="text-xs text-slate-500">阈值 / 尝试</p>
+                <p className="mt-1 tabular-nums font-medium">
+                  {activeJob.threshold || '—'} / {activeJob.attempt}
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <h3 className="mb-2 text-sm font-semibold text-ink">时间线</h3>
+              <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                <div className="flex justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                  <dt className="text-slate-500">创建</dt>
+                  <dd className="tabular-nums text-ink">{formatDateTime(activeJob.createdAt)}</dd>
+                </div>
+                <div className="flex justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                  <dt className="text-slate-500">开始</dt>
+                  <dd className="tabular-nums text-ink">{formatDateTime(activeJob.startedAt)}</dd>
+                </div>
+                <div className="flex justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                  <dt className="text-slate-500">完成</dt>
+                  <dd className="tabular-nums text-ink">{formatDateTime(activeJob.completedAt)}</dd>
+                </div>
+                <div className="flex justify-between gap-3 rounded-lg border border-slate-100 px-3 py-2">
+                  <dt className="text-slate-500">runAfter</dt>
+                  <dd className="tabular-nums text-ink">{formatDateTime(activeJob.runAfter)}</dd>
+                </div>
+              </dl>
+            </div>
+
+            {activeJob.errorMessage && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                <p className="text-xs font-semibold text-red-800">错误信息</p>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-red-900">{activeJob.errorMessage}</p>
+              </div>
+            )}
+
+            {activeJob.proposalId && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+                <p className="font-semibold">已生成审核提案</p>
+                <p className="mt-1 font-mono text-xs">{activeJob.proposalId}</p>
+                {activeJob.proposalStatus && (
+                  <p className="mt-2 flex items-center gap-2">
+                    状态 <StatusBadge status={activeJob.proposalStatus} />
+                  </p>
+                )}
+                <p className="mt-2 text-xs">可前往「审核中心」查看并处理该提案。</p>
+              </div>
+            )}
+
+            {activeJob.parentProposalId && (
+              <p className="text-xs text-slate-500">
+                父提案：<span className="font-mono">{activeJob.parentProposalId}</span>
+              </p>
+            )}
+
+            <div className="flex justify-end border-t border-slate-100 pt-3">
+              <button type="button" className={btnSecondary} onClick={() => setActiveJobId(null)}>关闭</button>
+            </div>
+          </div>
+        </Modal>
       )}
     </section>
   )

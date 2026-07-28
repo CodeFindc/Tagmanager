@@ -1,4 +1,4 @@
-import type { ConsolidationTriggerResult, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from '../types/api'
+import type { ConsolidationJob, ConsolidationTriggerResult, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -40,6 +40,9 @@ export const api = {
   tags: (namespaceId: string, q = '') => request<{ data: Tag[] }>(`/tags?namespaceId=${encodeURIComponent(namespaceId)}&q=${encodeURIComponent(q)}`),
   pool: (namespaceId: string) => request<{ data: PoolEntry[]; threshold: number }>(`/candidate-pools/${namespaceId}/entries`),
   triggerConsolidation: (namespaceId: string) => request<ConsolidationTriggerResult>(`/candidate-pools/${namespaceId}/consolidate`, { method: 'POST' }),
+  consolidationJobs: (namespaceId: string, limit = 50) =>
+    request<{ data: ConsolidationJob[] }>(`/consolidation-jobs?namespaceId=${encodeURIComponent(namespaceId)}&limit=${limit}`),
+  consolidationJob: (jobId: string) => request<ConsolidationJob>(`/consolidation-jobs/${encodeURIComponent(jobId)}`),
   importTags: (payload: { namespaceId: string; sourceName: string; tags: string[]; initialSeed: boolean }) => request<ImportResult>('/imports', { method: 'POST', headers: { 'Idempotency-Key': createIdempotencyKey() }, body: JSON.stringify(payload) }),
   proposals: (params?: { status?: string }) => {
     const q = params?.status ? `?status=${encodeURIComponent(params.status)}` : ''

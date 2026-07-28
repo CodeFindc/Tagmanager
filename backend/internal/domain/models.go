@@ -60,6 +60,28 @@ type ConsolidationTriggerResult struct {
 	ConsolidationMessage string `json:"consolidationMessage"`
 }
 
+// ConsolidationJobView is a read model joining job + window + optional proposal.
+type ConsolidationJobView struct {
+	ID               string     `json:"id"`
+	NamespaceID      string     `json:"namespaceId"`
+	JobType          string     `json:"jobType"`
+	Status           string     `json:"status"`
+	Attempt          int        `json:"attempt"`
+	ErrorMessage     string     `json:"errorMessage"`
+	CreatedAt        time.Time  `json:"createdAt"`
+	StartedAt        *time.Time `json:"startedAt,omitempty"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
+	RunAfter         time.Time  `json:"runAfter"`
+	PoolWindowID     string     `json:"poolWindowId,omitempty"`
+	WindowStatus     string     `json:"windowStatus,omitempty"`
+	TriggerReason    string     `json:"triggerReason,omitempty"`
+	Threshold        int        `json:"threshold,omitempty"`
+	SnapshotCount    int        `json:"snapshotCount"`
+	ProposalID       *string    `json:"proposalId,omitempty"`
+	ProposalStatus   *string    `json:"proposalStatus,omitempty"`
+	ParentProposalID *string    `json:"parentProposalId,omitempty"`
+}
+
 type PoolEntry struct {
 	ID              string    `json:"id"`
 	NamespaceID     string    `json:"namespaceId"`
