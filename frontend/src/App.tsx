@@ -25,7 +25,7 @@ export function App() {
     ['/imports', '批次导入'],
     ['/pool', '候选池'],
     ['/review', '审核中心'],
-    ...(user.role === 'admin' ? [['/users', '用户管理']] : []),
+    ...(user.role === 'admin' ? [['/namespaces', '标签域'], ['/users', '用户管理']] : []),
   ] as const
 
   return (
@@ -61,11 +61,12 @@ export function App() {
 
         <main>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
+            <Route path="/" element={<Dashboard isAdmin={user.role === 'admin'} />} />
             <Route path="/tags" element={<TagsPage />} />
             <Route path="/imports" element={<ImportPage />} />
             <Route path="/pool" element={<PoolPage />} />
             <Route path="/review" element={<ReviewPage />} />
+            {user.role === 'admin' && <Route path="/namespaces" element={<NamespacesPage />} />}
             {user.role === 'admin' && <Route path="/users" element={<UsersPage />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
@@ -156,6 +157,139 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
         </form>
       </div>
     </div>
+  )
+}
+
+function NamespacesPage() {
+  const [items, setItems] = useState<Namespace[]>([])
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [candidateThreshold, setCandidateThreshold] = useState(50)
+  const [submitting, setSubmitting] = useState(false)
+
+  const reload = () => {
+    api.namespaces()
+      .then(res => setItems(res.data))
+      .catch(err => setError(err instanceof Error ? err.message : '加载标签域失败'))
+  }
+  useEffect(() => { reload() }, [])
+
+  async function handleCreate(e: FormEvent) {
+    e.preventDefault()
+    const trimmed = name.trim()
+    if (!trimmed) {
+      setError('标签域名称不能为空')
+      return
+    }
+    if (!Number.isInteger(candidateThreshold) || candidateThreshold < 1) {
+      setError('候选池阈值必须是大于 0 的整数')
+      return
+    }
+    setError('')
+    setSuccess('')
+    setSubmitting(true)
+    try {
+      const created = await api.createNamespace({
+        name: trimmed,
+        description: description.trim(),
+        candidateThreshold,
+      })
+      setName('')
+      setDescription('')
+      setCandidateThreshold(50)
+      setSuccess(`已创建标签域「${created.name}」，候选池阈值 ${created.candidateThreshold}。可前往批次导入首批标签。`)
+      reload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建标签域失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <section>
+      <h1 className="text-2xl font-bold">标签域管理</h1>
+      <p className="mt-1 text-slate-500">按业务隔离标签库与候选池；阈值决定未命中标签累计多少后冻结窗口并触发模型归并。</p>
+
+      {error && <Notice message={error} />}
+      {success && <p className="mt-4 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-800 border border-emerald-200">{success}</p>}
+
+      <div className="mt-6 rounded-xl border bg-white p-5">
+        <h2 className="font-semibold">创建标签域</h2>
+        <form onSubmit={handleCreate} className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[180px]">
+            <label className="block text-xs text-slate-500 mb-1">名称</label>
+            <input
+              required
+              placeholder="例如：产品能力 / 行业主题"
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={name}
+              onChange={e => setName(e.target.value)}
+            />
+          </div>
+          <div className="flex-[2] min-w-[220px]">
+            <label className="block text-xs text-slate-500 mb-1">描述（可选）</label>
+            <input
+              placeholder="用途说明"
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+            />
+          </div>
+          <div className="w-36">
+            <label className="block text-xs text-slate-500 mb-1">候选池阈值</label>
+            <input
+              required
+              type="number"
+              min={1}
+              step={1}
+              className="w-full rounded-lg border px-3 py-2 text-sm"
+              value={candidateThreshold}
+              onChange={e => setCandidateThreshold(Number(e.target.value))}
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={submitting}
+            className="rounded-lg bg-brand px-4 py-2 font-semibold text-white text-sm disabled:opacity-60"
+          >
+            {submitting ? '创建中…' : '创建标签域'}
+          </button>
+        </form>
+        <p className="mt-3 text-xs text-slate-500">默认阈值 50；设为较小值（如 5）便于联调。创建后暂不支持在界面修改阈值。</p>
+      </div>
+
+      <div className="mt-6 overflow-hidden rounded-xl border bg-white">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-slate-50 text-slate-500">
+            <tr>
+              <th className="p-3">名称</th>
+              <th className="p-3">描述</th>
+              <th className="p-3">候选池阈值</th>
+              <th className="p-3">ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.length === 0 ? (
+              <tr className="border-t">
+                <td colSpan={4} className="p-6 text-center text-slate-500">暂无标签域，请先创建一个。</td>
+              </tr>
+            ) : items.map(ns => (
+              <tr key={ns.id} className="border-t">
+                <td className="p-3 font-medium">{ns.name}</td>
+                <td className="p-3 text-slate-600">{ns.description || '—'}</td>
+                <td className="p-3">
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700">{ns.candidateThreshold}</span>
+                </td>
+                <td className="p-3 font-mono text-xs text-slate-400">{ns.id}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   )
 }
 
@@ -295,15 +429,20 @@ function Card({ title, value, detail }: { title: string; value: string | number;
   )
 }
 
-function Dashboard() {
+function Dashboard({ isAdmin }: { isAdmin: boolean }) {
   const { items: namespaces, error } = useNamespaces()
   return (
     <section>
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">运营概览</h1>
           <p className="mt-1 text-slate-500">管理标签命中、候选积压和人工审核。</p>
         </div>
+        {isAdmin && (
+          <NavLink to="/namespaces" className="rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shrink-0">
+            创建标签域
+          </NavLink>
+        )}
       </div>
       {error ? <Notice message={error} /> : <>
         <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -315,7 +454,16 @@ function Dashboard() {
         <section className="mt-6 rounded-xl border border-dashed border-slate-300 bg-white p-6">
           <h2 className="font-semibold">开始使用</h2>
           <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-slate-600">
-            <li>创建一个标签域并设置候选池阈值。</li>
+            <li>
+              {isAdmin ? (
+                <>
+                  <NavLink to="/namespaces" className="text-brand font-medium hover:underline">创建一个标签域并设置候选池阈值</NavLink>
+                  。
+                </>
+              ) : (
+                '请管理员创建一个标签域并设置候选池阈值。'
+              )}
+            </li>
             <li>导入首批标签，候选池任务会调用已配置的 OpenAI 兼容模型。</li>
             <li>在审核中心针对模型建议标签进行逐项（Accept/Edit/Reject）精细化审核与决策。</li>
           </ol>
