@@ -1211,14 +1211,24 @@ function ProposalModal({
   onDecide: (action: 'approve' | 'reject' | 'discard') => void
 }) {
   const [filterMode, setFilterMode] = useState<'all' | 'existing' | 'new'>('all')
+  const [confidenceOperator, setConfidenceOperator] = useState<'>=' | '<='>('>=')
+  const [confidenceValue, setConfidenceValue] = useState<string>('')
   const tags = proposal.tags || []
   const existingCount = tags.filter(t => t.isExistingCanonical).length
   const newCount = tags.filter(t => !t.isExistingCanonical).length
   const acceptedCount = tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
 
   const visibleTags = tags.filter(t => {
-    if (filterMode === 'existing') return t.isExistingCanonical
-    if (filterMode === 'new') return !t.isExistingCanonical
+    if (filterMode === 'existing' && !t.isExistingCanonical) return false
+    if (filterMode === 'new' && t.isExistingCanonical) return false
+
+    const confVal = parseFloat(confidenceValue)
+    if (!isNaN(confVal) && confVal >= 0 && confVal <= 100) {
+      const tagConfPct = Math.round(t.confidence * 100)
+      if (confidenceOperator === '>=' && tagConfPct < confVal) return false
+      if (confidenceOperator === '<=' && tagConfPct > confVal) return false
+    }
+
     return true
   })
 
@@ -1253,17 +1263,17 @@ function ProposalModal({
               )}
               <button
                 type="button"
-                onClick={() => batchSetAccepted(tags, true)}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                onClick={() => batchSetAccepted(visibleTags, true)}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
               >
-                全选采纳
+                采纳当前筛选 ({visibleTags.length})
               </button>
               <button
                 type="button"
-                onClick={() => batchSetAccepted(tags, false)}
-                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                onClick={() => batchSetAccepted(visibleTags, false)}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
               >
-                全选忽略
+                忽略当前筛选 ({visibleTags.length})
               </button>
             </div>
           )}
@@ -1272,30 +1282,64 @@ function ProposalModal({
         {error && <Notice message={error} />}
 
         <div className={readonly ? 'pointer-events-none opacity-70' : ''}>
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议列表</h3>
-            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs font-medium">
-              <button
-                type="button"
-                onClick={() => setFilterMode('all')}
-                className={`rounded-md px-2.5 py-1 ${filterMode === 'all' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                全部 ({tags.length})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('existing')}
-                className={`rounded-md px-2.5 py-1 ${filterMode === 'existing' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                归入已有 ({existingCount})
-              </button>
-              <button
-                type="button"
-                onClick={() => setFilterMode('new')}
-                className={`rounded-md px-2.5 py-1 ${filterMode === 'new' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
-              >
-                建议新建 ({newCount})
-              </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
+                <span className="text-slate-500 font-medium">置信度:</span>
+                <select
+                  value={confidenceOperator}
+                  onChange={e => setConfidenceOperator(e.target.value as '>=' | '<=')}
+                  className="rounded border border-slate-200 bg-white px-1.5 py-0.5 outline-none text-xs font-semibold text-slate-700"
+                >
+                  <option value=">=">&ge; (大于等于)</option>
+                  <option value="<=">&le; (小于等于)</option>
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  placeholder="如 80"
+                  value={confidenceValue}
+                  onChange={e => setConfidenceValue(e.target.value)}
+                  className="w-14 rounded border border-slate-200 bg-white px-1.5 py-0.5 outline-none text-xs font-medium text-slate-800"
+                />
+                <span className="text-slate-500 font-medium">%</span>
+                {confidenceValue && (
+                  <button
+                    type="button"
+                    onClick={() => setConfidenceValue('')}
+                    className="ml-1 text-xs text-slate-400 hover:text-slate-600"
+                    title="重置置信度筛选"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs font-medium">
+                <button
+                  type="button"
+                  onClick={() => setFilterMode('all')}
+                  className={`rounded-md px-2.5 py-1 ${filterMode === 'all' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  全部 ({tags.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterMode('existing')}
+                  className={`rounded-md px-2.5 py-1 ${filterMode === 'existing' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  归入已有 ({existingCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterMode('new')}
+                  className={`rounded-md px-2.5 py-1 ${filterMode === 'new' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                >
+                  建议新建 ({newCount})
+                </button>
+              </div>
             </div>
           </div>
 
