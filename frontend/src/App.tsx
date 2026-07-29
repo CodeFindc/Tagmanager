@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
 import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from './types/api'
@@ -21,6 +21,51 @@ import {
   btnWarning,
   inputClass,
 } from './components/ui'
+
+interface ErrorBoundaryProps {
+  children: ReactNode
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = {
+    hasError: false,
+    error: null,
+  }
+
+  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Unhandled UI error:', error, errorInfo)
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-6 max-w-xl mx-auto my-8">
+          <Notice message={`页面渲染发生错误: ${this.state.error?.message || '未知错误'}`} />
+          <button
+            type="button"
+            onClick={() => {
+              this.setState({ hasError: false, error: null })
+              window.location.reload()
+            }}
+            className="mt-4 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white hover:bg-brand/90"
+          >
+            刷新页面
+          </button>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 export function App() {
   const [user, setUser] = useState<User | null>(null)
@@ -494,8 +539,8 @@ function TagsPage() {
               {tags.map(tag => (
                 <tr key={tag.id} className="border-t">
                   <td className="p-3 font-medium">{tag.canonicalName}</td>
-                  <td className="max-w-[200px] truncate p-3 text-slate-600" title={tag.aliases.join('、') || undefined}>
-                    {tag.aliases.join('、') || '—'}
+                  <td className="max-w-[200px] truncate p-3 text-slate-600" title={(tag.aliases || []).join('、') || undefined}>
+                    {(tag.aliases || []).join('、') || '—'}
                   </td>
                   <td className="hidden max-w-[240px] truncate p-3 text-slate-600 md:table-cell" title={tag.description || undefined}>
                     {tag.description || '—'}
@@ -936,12 +981,14 @@ function isPendingProposal(status: string) {
 
 function buildItemEdits(proposal: Proposal): Record<string, ItemEditState> {
   const edits: Record<string, ItemEditState> = {}
-  for (const tag of proposal.tags) {
+  const tags = proposal.tags || []
+  for (const tag of tags) {
+    const aliases = tag.aliases || []
     edits[tag.id] = {
       accepted: tag.accepted ?? true,
-      canonicalName: tag.canonicalName,
-      description: tag.description,
-      aliases: tag.aliases.join(', '),
+      canonicalName: tag.canonicalName || '',
+      description: tag.description || '',
+      aliases: aliases.join(', '),
     }
   }
   return edits
@@ -949,8 +996,9 @@ function buildItemEdits(proposal: Proposal): Record<string, ItemEditState> {
 
 function acceptedSummary(proposal: Proposal) {
   if (isPendingProposal(proposal.status)) return '—'
-  const accepted = proposal.tags.filter(t => t.accepted === true).length
-  return `${accepted} / ${proposal.tags.length}`
+  const tags = proposal.tags || []
+  const accepted = tags.filter(t => t.accepted === true).length
+  return `${accepted} / ${tags.length}`
 }
 
 function ReviewPage() {
@@ -1162,7 +1210,8 @@ function ProposalModal({
   onClose: () => void
   onDecide: (action: 'approve' | 'reject' | 'discard') => void
 }) {
-  const acceptedCount = proposal.tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
+  const tags = proposal.tags || []
+  const acceptedCount = tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
 
   return (
     <Modal onClose={onClose} wide title={`提案 ${proposal.id.slice(0, 8)}`}>
@@ -1171,7 +1220,7 @@ function ProposalModal({
           <StatusBadge status={proposal.status} />
           <span>{new Date(proposal.createdAt).toLocaleString()}</span>
           <span>· v{proposal.version}</span>
-          <span>· <span className="tabular-nums">{proposal.tags.length}</span> 项建议</span>
+          <span>· <span className="tabular-nums">{tags.length}</span> 项建议</span>
           <span>· 已采纳 <span className="tabular-nums font-medium text-emerald-700">{acceptedCount}</span></span>
         </div>
 
@@ -1180,12 +1229,14 @@ function ProposalModal({
         <div className={readonly ? 'pointer-events-none opacity-70' : ''}>
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议</h3>
           <div className="grid gap-3 xl:grid-cols-2">
-            {proposal.tags.map(tag => {
+            {tags.map(tag => {
+              const aliases = tag.aliases || []
+              const coveredEntryIds = tag.coveredEntryIds || []
               const edit = itemEdits[tag.id] ?? {
                 accepted: tag.accepted ?? true,
-                canonicalName: tag.canonicalName,
-                description: tag.description,
-                aliases: tag.aliases.join(', '),
+                canonicalName: tag.canonicalName || '',
+                description: tag.description || '',
+                aliases: aliases.join(', '),
               }
               return (
                 <div
@@ -1219,7 +1270,7 @@ function ProposalModal({
                       <span className="rounded bg-brand/10 px-2 py-0.5 font-semibold text-brand tabular-nums">
                         {Math.round(tag.confidence * 100)}%
                       </span>
-                      <span className="tabular-nums">覆盖 {tag.coveredEntryIds.length}</span>
+                      <span className="tabular-nums">覆盖 {coveredEntryIds.length}</span>
                     </div>
                   </div>
 

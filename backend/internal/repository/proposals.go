@@ -92,7 +92,12 @@ func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.P
 			mappingRows.Close()
 			return nil, err
 		}
-		mappingRows.Close()
+		if tag.Aliases == nil {
+			tag.Aliases = []string{}
+		}
+		if tag.CoveredEntryIDs == nil {
+			tag.CoveredEntryIDs = []string{}
+		}
 		items = append(items, tag)
 	}
 	return items, rows.Err()
