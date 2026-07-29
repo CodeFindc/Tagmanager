@@ -45,3 +45,7 @@ export interface ConsolidationJob {
 }
 export interface ProposalTag { id: string; canonicalName: string; description: string; aliases: string[]; rationale: string; confidence: number; coveredEntryIds: string[]; accepted?: boolean; isExistingCanonical?: boolean }
 export interface Proposal { id: string; namespaceId: string; poolWindowId: string; status: string; version: number; reviewerFeedback: string; createdAt: string; tags: ProposalTag[] }
+export interface TagMatchRequest { namespaceId: string; tag?: string; tags?: string[]; sourceName?: string }
+export interface CanonicalTagInfo { id: string; canonicalName: string; description: string; version: number }
+export interface TagMatchItemResult { rawTag: string; hit: boolean; matchedAs?: 'canonical' | 'alias' | string; canonicalTag?: CanonicalTagInfo; message?: string }
+export interface TagMatchResponse { results: TagMatchItemResult[]; hitCount: number; missCount: number }

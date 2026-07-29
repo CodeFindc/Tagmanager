@@ -1,7 +1,7 @@
 import { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
-import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, User } from './types/api'
+import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, TagMatchItemResult, TagMatchResponse, User } from './types/api'
 import {
   EmptyState,
   Field,
@@ -562,7 +562,110 @@ function TagsPage() {
           </table>
         </TableShell>
       </div>
+
+      <div className="mt-6">
+        <TagMatchSimulator namespaceId={namespaceId} />
+      </div>
     </section>
+  )
+}
+
+function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
+  const [inputTags, setInputTags] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [response, setResponse] = useState<TagMatchResponse | null>(null)
+
+  const handleMatch = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!namespaceId) {
+      setError('请先在上方选择标签域')
+      return
+    }
+    const tags = inputTags.split(/[,，\n]/).map(s => s.trim()).filter(Boolean)
+    if (tags.length === 0) {
+      setError('请输入至少一个要比对的标签')
+      return
+    }
+    setError('')
+    setBusy(true)
+    try {
+      const res = await api.matchTags({ namespaceId, tags, sourceName: 'console_simulator' })
+      setResponse(res)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '匹配请求失败')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Panel title="第三方 API 实时匹配测试器 (Tag Match Simulator)">
+      <form onSubmit={handleMatch} className="space-y-3">
+        <Field label="输入第三方不规范标签 (逗号或换行分隔)">
+          <textarea
+            className={`${inputClass} min-h-16 text-xs`}
+            placeholder="例如: 自行车与机动车碰撞, 违规空域无人机黑飞"
+            value={inputTags}
+            onChange={e => setInputTags(e.target.value)}
+          />
+        </Field>
+        <div className="flex justify-end">
+          <button type="submit" disabled={busy || !namespaceId} className={btnPrimary}>
+            {busy ? '匹配比对中…' : '发起 API 实时匹配测试'}
+          </button>
+        </div>
+      </form>
+
+      {error && <Notice message={error} />}
+
+      {response && (
+        <div className="mt-4 space-y-3 border-t border-slate-100 pt-3 text-xs">
+          <div className="flex items-center gap-3">
+            <span className="font-semibold text-slate-700">API 返回结果:</span>
+            <span className="rounded bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800 tabular-nums">
+              命中 ({response.hitCount})
+            </span>
+            <span className="rounded bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 tabular-nums">
+              未命中/已自动入池 ({response.missCount})
+            </span>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            {response.results.map((res, idx) => (
+              <div
+                key={idx}
+                className={`rounded-lg border p-3 ${
+                  res.hit ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2 font-medium">
+                  <span className="text-slate-900 font-semibold">{res.rawTag}</span>
+                  {res.hit ? (
+                    <span className="rounded bg-emerald-600 px-2 py-0.5 text-[11px] text-white font-semibold">
+                      HIT (命中{res.matchedAs === 'alias' ? '别名' : '主标签'})
+                    </span>
+                  ) : (
+                    <span className="rounded bg-amber-600 px-2 py-0.5 text-[11px] text-white font-semibold">
+                      MISS (已收集入池)
+                    </span>
+                  )}
+                </div>
+                {res.hit && res.canonicalTag && (
+                  <div className="mt-2 space-y-1 text-slate-700">
+                    <p><span className="text-slate-500">主规范名:</span> <strong className="text-emerald-800">{res.canonicalTag.canonicalName}</strong></p>
+                    {res.canonicalTag.description && <p className="text-slate-500 line-clamp-1">{res.canonicalTag.description}</p>}
+                  </div>
+                )}
+                {!res.hit && (
+                  <p className="mt-2 text-amber-800 leading-relaxed">{res.message}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Panel>
   )
 }
 

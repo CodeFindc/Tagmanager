@@ -1,4 +1,4 @@
-import type { ConsolidationJob, ConsolidationTriggerResult, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from '../types/api'
+import type { ConsolidationJob, ConsolidationTriggerResult, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, TagMatchRequest, TagMatchResponse, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -52,6 +52,7 @@ export const api = {
   users: () => request<{ data: User[] }>('/users'),
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+  matchTags: (payload: TagMatchRequest) => request<TagMatchResponse>('/tags/match', { method: 'POST', body: JSON.stringify(payload) }),
   changePassword: (payload: { oldPassword: string; newPassword: string }) => request<{ status: string }>('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }),
 }
 

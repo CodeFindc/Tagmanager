@@ -128,3 +128,31 @@ type ConsolidatedTag struct {
 	Rationale     string   `json:"rationale"`
 	Confidence    float64  `json:"confidence"`
 }
+
+type TagMatchRequest struct {
+	NamespaceID string   `json:"namespaceId"`
+	Tag         string   `json:"tag,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	SourceName  string   `json:"sourceName,omitempty"`
+}
+
+type CanonicalTagInfo struct {
+	ID            string `json:"id"`
+	CanonicalName string `json:"canonicalName"`
+	Description   string `json:"description"`
+	Version       int    `json:"version"`
+}
+
+type TagMatchItemResult struct {
+	RawTag       string            `json:"rawTag"`
+	Hit          bool              `json:"hit"`
+	MatchedAs    string            `json:"matchedAs,omitempty"` // "canonical" | "alias"
+	CanonicalTag *CanonicalTagInfo `json:"canonicalTag,omitempty"`
+	Message      string            `json:"message,omitempty"`
+}
+
+type TagMatchResponse struct {
+	Results   []TagMatchItemResult `json:"results"`
+	HitCount  int                  `json:"hitCount"`
+	MissCount int                  `json:"missCount"`
+}

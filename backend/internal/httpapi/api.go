@@ -46,6 +46,7 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Get("/namespaces", api.listNamespaces)
 			r.Post("/namespaces", api.require(domain.RoleAdmin, api.createNamespace))
 			r.Get("/tags", api.listTags)
+			r.Post("/tags/match", api.matchTags)
 			r.Get("/candidate-pools/{namespaceID}/entries", api.listPool)
 			r.Post("/candidate-pools/{namespaceID}/consolidate", api.require(domain.RoleAdmin, api.triggerConsolidation))
 			r.Get("/consolidation-jobs", api.listConsolidationJobs)
@@ -394,4 +395,17 @@ func respondError(w http.ResponseWriter, status int, message string) {
 		message = "internal server error"
 	}
 	respond(w, status, map[string]any{"error": map[string]string{"message": message}})
+}
+
+func (a *API) matchTags(w http.ResponseWriter, r *http.Request) {
+	var body domain.TagMatchRequest
+	if decode(w, r, &body) != nil {
+		return
+	}
+	res, err := a.store.MatchTags(r.Context(), body, currentUser(r).ID, service.NormalizeTag)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, res)
 }

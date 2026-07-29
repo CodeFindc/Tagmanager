@@ -384,3 +384,118 @@ func (s *Store) poolSnapshotTx(ctx context.Context, tx pgx.Tx, namespaceID strin
 	}
 	return json.Marshal(entries)
 }
+
+// MatchTags performs online real-time tag matching against published tags and aliases.
+// Hits return the canonical tag details. Misses auto-ingest into candidate_pool_entries
+// and auto-trigger a consolidation window if threshold is reached.
+func (s *Store) MatchTags(ctx context.Context, req domain.TagMatchRequest, actorID string, normalize func(string) string) (domain.TagMatchResponse, error) {
+	rawList := req.Tags
+	if len(rawList) == 0 && req.Tag != "" {
+		rawList = []string{req.Tag}
+	}
+	if len(rawList) == 0 {
+		return domain.TagMatchResponse{}, fmt.Errorf("no tags provided for matching")
+	}
+	if strings.TrimSpace(req.NamespaceID) == "" {
+		return domain.TagMatchResponse{}, fmt.Errorf("namespaceId is required")
+	}
+
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return domain.TagMatchResponse{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var threshold int
+	if err = tx.QueryRow(ctx, `SELECT candidate_threshold FROM tag_namespaces WHERE id=$1`, req.NamespaceID).Scan(&threshold); err != nil {
+		if err == pgx.ErrNoRows {
+			return domain.TagMatchResponse{}, fmt.Errorf("namespace not found")
+		}
+		return domain.TagMatchResponse{}, err
+	}
+
+	res := domain.TagMatchResponse{
+		Results: []domain.TagMatchItemResult{},
+	}
+
+	newUnmatchedCount := 0
+
+	for _, raw := range rawList {
+		rawTrimmed := strings.TrimSpace(raw)
+		if rawTrimmed == "" {
+			continue
+		}
+		normalized := normalize(rawTrimmed)
+		if normalized == "" {
+			res.MissCount++
+			res.Results = append(res.Results, domain.TagMatchItemResult{
+				RawTag:  rawTrimmed,
+				Hit:     false,
+				Message: "标签文本格式无效",
+			})
+			continue
+		}
+
+		var tagID string
+		var matchedAs string
+		matchErr := tx.QueryRow(ctx, `SELECT id FROM tags WHERE namespace_id=$1 AND normalized_name=$2 AND status='published'`, req.NamespaceID, normalized).Scan(&tagID)
+		if matchErr == nil {
+			matchedAs = "canonical"
+		} else if matchErr == pgx.ErrNoRows {
+			matchErr = tx.QueryRow(ctx, `SELECT tag_id FROM tag_aliases WHERE namespace_id=$1 AND normalized_name=$2`, req.NamespaceID, normalized).Scan(&tagID)
+			if matchErr == nil {
+				matchedAs = "alias"
+			}
+		}
+
+		if matchErr == nil && tagID != "" {
+			var info domain.CanonicalTagInfo
+			if err := tx.QueryRow(ctx, `SELECT id, canonical_name, description, version FROM tags WHERE id=$1`, tagID).Scan(&info.ID, &info.CanonicalName, &info.Description, &info.Version); err == nil {
+				res.HitCount++
+				res.Results = append(res.Results, domain.TagMatchItemResult{
+					RawTag:       rawTrimmed,
+					Hit:          true,
+					MatchedAs:    matchedAs,
+					CanonicalTag: &info,
+					Message:      "成功匹配已发布规范标签",
+				})
+				continue
+			}
+		}
+
+		// Miss: Auto-ingest into candidate_pool_entries
+		res.MissCount++
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO candidate_pool_entries(namespace_id, raw_sample, normalized_name, occurrence_count, last_seen_at)
+			VALUES($1, $2, $3, 1, now())
+			ON CONFLICT(namespace_id, normalized_name) 
+			DO UPDATE SET occurrence_count = candidate_pool_entries.occurrence_count + 1, last_seen_at = now()
+		`, req.NamespaceID, rawTrimmed, normalized); err != nil {
+			return domain.TagMatchResponse{}, err
+		}
+		newUnmatchedCount++
+		res.Results = append(res.Results, domain.TagMatchItemResult{
+			RawTag:  rawTrimmed,
+			Hit:     false,
+			Message: "未匹配到规范标签，已自动收集入候选词池，建议先跳过此数据",
+		})
+	}
+
+	// Check threshold and auto trigger consolidation if reached
+	if newUnmatchedCount > 0 {
+		var count int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM candidate_pool_entries WHERE namespace_id=$1 AND resolved_at IS NULL`, req.NamespaceID).Scan(&count); err == nil {
+			if count >= threshold {
+				if snapshot, buildErr := s.poolSnapshotTx(ctx, tx, req.NamespaceID); buildErr == nil {
+					_, _, _, _ = s.enqueueConsolidation(ctx, tx, req.NamespaceID, threshold, "threshold", "pool_window", snapshot)
+				}
+			}
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.TagMatchResponse{}, err
+	}
+
+	return res, nil
+}
