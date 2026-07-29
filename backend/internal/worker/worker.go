@@ -107,14 +107,24 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 	if err = json.Unmarshal(snapshot, &entries); err != nil {
 		return w.fail(ctx, job.ID, job.WindowID, err)
 	}
+	existingTags, fetchErr := fetchExistingTags(ctx, w.pool, job.NamespaceID)
+	if fetchErr != nil {
+		w.logger.Warn("failed to fetch existing tags for consolidation context", "jobId", job.ID, "namespaceId", job.NamespaceID, "error", fetchErr)
+	}
 	w.logger.Info("calling llm consolidate",
 		"jobId", job.ID,
 		"namespace", namespaceName,
 		"entries", len(entries),
+		"existingTags", len(existingTags),
 		"snapshotBytes", len(snapshot),
 		"hasFeedback", feedback != "",
 	)
-	output, err := w.llm.Consolidate(ctx, llm.ConsolidationRequest{NamespaceName: namespaceName, Feedback: feedback, Entries: entries})
+	output, err := w.llm.Consolidate(ctx, llm.ConsolidationRequest{
+		NamespaceName: namespaceName,
+		Feedback:      feedback,
+		ExistingTags:  existingTags,
+		Entries:       entries,
+	})
 	if err != nil {
 		w.logger.Error("llm consolidate failed", "jobId", job.ID, "elapsed", time.Since(started).String(), "error", err)
 		return w.fail(ctx, job.ID, job.WindowID, err)
@@ -223,4 +233,34 @@ func (w *Worker) persistProposal(ctx context.Context, jobID, namespaceID, window
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func fetchExistingTags(ctx context.Context, pool *pgxpool.Pool, namespaceID string) ([]llm.ExistingTag, error) {
+	if pool == nil {
+		return nil, nil
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT t.canonical_name, COALESCE(json_agg(a.alias_name) FILTER (WHERE a.id IS NOT NULL), '[]')
+		FROM tags t
+		LEFT JOIN tag_aliases a ON a.tag_id = t.id
+		WHERE t.namespace_id = $1 AND t.status = 'published'
+		GROUP BY t.id, t.canonical_name
+		ORDER BY t.canonical_name
+	`, namespaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []llm.ExistingTag
+	for rows.Next() {
+		var item llm.ExistingTag
+		var aliasesRaw []byte
+		if err := rows.Scan(&item.CanonicalName, &aliasesRaw); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(aliasesRaw, &item.Aliases)
+		result = append(result, item)
+	}
+	return result, rows.Err()
 }

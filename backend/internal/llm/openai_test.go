@@ -214,3 +214,54 @@ func TestOpenAICompatibleClient_Consolidate_InvalidContentJSON(t *testing.T) {
 		t.Fatalf("expected 'invalid LLM structured output' error, got %v", err)
 	}
 }
+
+func TestOpenAICompatibleClient_Consolidate_WithExistingTags(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("failed reading body: %v", err)
+		}
+		var reqBody struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.Unmarshal(bodyBytes, &reqBody); err != nil {
+			t.Fatalf("failed unmarshaling reqBody: %v", err)
+		}
+		if len(reqBody.Messages) < 2 {
+			t.Fatalf("expected at least 2 messages, got %d", len(reqBody.Messages))
+		}
+		userContent := reqBody.Messages[1].Content
+		if !strings.Contains(userContent, "existingTags") || !strings.Contains(userContent, "交通事故与交通违法") {
+			t.Errorf("user content expected to contain existingTags context, got: %s", userContent)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"tags\":[{\"canonicalName\":\"交通事故与交通违法\",\"description\":\"交通类\",\"aliases\":[\"自行车与机动车碰撞\"],\"coveredIds\":[\"c1\"],\"rationale\":\"r\",\"confidence\":0.95}]}"}}]}`))
+	}))
+	defer ts.Close()
+
+	client := NewOpenAICompatible(config.LLMConfig{
+		BaseURL: ts.URL,
+		APIKey:  "key",
+		Model:   "model",
+	}, nil)
+
+	output, err := client.Consolidate(context.Background(), ConsolidationRequest{
+		NamespaceName: "交通",
+		ExistingTags: []ExistingTag{
+			{CanonicalName: "交通事故与交通违法", Aliases: []string{"交通违法"}},
+		},
+		Entries: []InputEntry{
+			{ID: "c1", Name: "自行车与机动车碰撞", Occurrences: 1},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(output.Tags) != 1 || output.Tags[0].CanonicalName != "交通事故与交通违法" {
+		t.Fatalf("unexpected output: %+v", output)
+	}
+}

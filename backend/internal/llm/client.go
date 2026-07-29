@@ -5,10 +5,16 @@ import (
 	"github.com/codefun/tagmanager/backend/internal/domain"
 )
 
+type ExistingTag struct {
+	CanonicalName string   `json:"canonicalName"`
+	Aliases       []string `json:"aliases,omitempty"`
+}
+
 type ConsolidationRequest struct {
-	NamespaceName string
-	Feedback      string
-	Entries       []InputEntry
+	NamespaceName string        `json:"namespaceName"`
+	Feedback      string        `json:"feedback,omitempty"`
+	ExistingTags  []ExistingTag `json:"existingTags,omitempty"`
+	Entries       []InputEntry  `json:"entries"`
 }
 
 type InputEntry struct {
