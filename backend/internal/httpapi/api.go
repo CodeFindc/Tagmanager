@@ -10,6 +10,7 @@ import (
 
 	"github.com/codefun/tagmanager/backend/internal/config"
 	"github.com/codefun/tagmanager/backend/internal/domain"
+	"github.com/codefun/tagmanager/backend/internal/llm"
 	"github.com/codefun/tagmanager/backend/internal/repository"
 	"github.com/codefun/tagmanager/backend/internal/service"
 	"github.com/go-chi/chi/v5"
@@ -18,13 +19,18 @@ import (
 )
 
 type API struct {
-	store *repository.Store
-	cfg   config.Config
+	store     *repository.Store
+	cfg       config.Config
+	llmClient *llm.OpenAICompatibleClient
 }
 type authContextKey struct{}
 
 func New(store *repository.Store, cfg config.Config) http.Handler {
-	api := &API{store: store, cfg: cfg}
+	api := &API{
+		store:     store,
+		cfg:       cfg,
+		llmClient: llm.NewOpenAICompatible(cfg.LLM, nil),
+	}
 	router := chi.NewRouter()
 	router.Use(cors.Handler(cors.Options{AllowedOrigins: []string{cfg.CORSOrigin}, AllowedMethods: []string{"GET", "POST", "PATCH", "OPTIONS"}, AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"}}))
 	router.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +61,7 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Get("/review/proposals", api.listProposals)
 			r.Get("/review/proposals/{proposalID}", api.getProposal)
 			r.Post("/review/proposals/{proposalID}/decision", api.require(domain.RoleReviewer, api.decideProposal))
+			r.Post("/review/proposals/{proposalID}/ai-evaluate", api.require(domain.RoleReviewer, api.evaluateProposalAI))
 			r.Get("/api-keys", api.listAPIKeys)
 			r.Post("/api-keys", api.createAPIKey)
 			r.Delete("/api-keys/{id}", api.revokeAPIKey)
@@ -469,4 +476,32 @@ func (a *API) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, map[string]string{"status": "api key revoked"})
+}
+
+func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {
+	proposalID := chi.URLParam(r, "proposalID")
+	if proposalID == "" {
+		respondError(w, http.StatusBadRequest, "missing proposal id")
+		return
+	}
+
+	var body domain.AIAuditEvaluateRequest
+	_ = decode(w, r, &body)
+
+	proposals, err := a.store.ListProposals(r.Context(), proposalID, "")
+	if err != nil || len(proposals) == 0 {
+		respondError(w, http.StatusNotFound, "proposal not found")
+		return
+	}
+	proposal := proposals[0]
+
+	candidateEntries, _ := a.store.GetProposalCandidateEntries(r.Context(), proposalID)
+
+	res, err := a.llmClient.EvaluateProposal(r.Context(), body.Config, proposal, candidateEntries)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	respond(w, http.StatusOK, res)
 }

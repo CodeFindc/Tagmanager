@@ -171,3 +171,26 @@ type CreateAPIKeyResponse struct {
 	APIKey APIKey `json:"apiKey"`
 	RawKey string `json:"rawKey"`
 }
+
+type AIAuditConfig struct {
+	BaseURL string `json:"baseUrl,omitempty"`
+	APIKey  string `json:"apiKey,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Prompt  string `json:"prompt,omitempty"`
+}
+
+type AIAuditEvaluateRequest struct {
+	Config AIAuditConfig `json:"config,omitempty"`
+}
+
+type TagAIAdvice struct {
+	CanonicalName  string `json:"canonicalName"`
+	Recommendation string `json:"recommendation"` // "accept" | "edit" | "reject"
+	Reason         string `json:"reason"`
+	SuggestedName  string `json:"suggestedName,omitempty"`
+}
+
+type AIAuditEvaluateResponse struct {
+	OverallSummary string        `json:"overallSummary"`
+	TagAdvice      []TagAIAdvice `json:"tagAdvice"`
+}

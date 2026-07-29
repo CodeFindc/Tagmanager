@@ -1,7 +1,7 @@
 import { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
-import type { APIKey, ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, TagMatchItemResult, TagMatchResponse, User } from './types/api'
+import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, TagAIAdvice, TagMatchItemResult, TagMatchResponse, User } from './types/api'
 import {
   EmptyState,
   Field,
@@ -1320,10 +1320,64 @@ function ProposalModal({
   const [confidenceValue, setConfidenceValue] = useState<string>('')
   const [coveredOperator, setCoveredOperator] = useState<'>=' | '<='>('>=')
   const [coveredValue, setCoveredValue] = useState<string>('')
+
+  const [aiEvaluating, setAiEvaluating] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiResult, setAiResult] = useState<AIAuditEvaluateResponse | null>(null)
+  const [showAIConfigModal, setShowAIConfigModal] = useState(false)
+  const [aiConfig, setAiConfig] = useState<AIAuditConfig>(() => {
+    try {
+      const saved = localStorage.getItem('tagmanager_ai_audit_config')
+      if (saved) return JSON.parse(saved)
+    } catch {}
+    return { baseUrl: '', apiKey: '', model: '', prompt: '' }
+  })
+
+  const handleAIEvaluate = async () => {
+    setAiError('')
+    setAiEvaluating(true)
+    try {
+      const res = await api.evaluateProposalAI(proposal.id, { config: aiConfig })
+      setAiResult(res)
+    } catch (err) {
+      setAiError(err instanceof Error ? err.message : 'AI 助审评估请求失败')
+    } finally {
+      setAiEvaluating(false)
+    }
+  }
+
+  const handleApplyAISuggestions = () => {
+    if (!aiResult || !aiResult.tagAdvice) return
+    const adviceMap = new Map<string, TagAIAdvice>()
+    aiResult.tagAdvice.forEach(a => adviceMap.set(a.canonicalName, a))
+
+    tags.forEach(t => {
+      const advice = adviceMap.get(t.canonicalName)
+      if (advice) {
+        if (advice.recommendation === 'accept' || advice.recommendation === 'edit') {
+          onUpdateItem(t.id, {
+            accepted: true,
+            canonicalName: advice.suggestedName ? advice.suggestedName : t.canonicalName,
+          })
+        } else if (advice.recommendation === 'reject') {
+          onUpdateItem(t.id, { accepted: false })
+        }
+      }
+    })
+  }
+
   const tags = proposal.tags || []
   const existingCount = tags.filter(t => t.isExistingCanonical).length
   const newCount = tags.filter(t => !t.isExistingCanonical).length
   const acceptedCount = tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
+
+  const adviceMap = useMemo(() => {
+    const map = new Map<string, TagAIAdvice>()
+    if (aiResult?.tagAdvice) {
+      aiResult.tagAdvice.forEach(a => map.set(a.canonicalName, a))
+    }
+    return map
+  }, [aiResult])
 
   const visibleTags = tags.filter(t => {
     if (filterMode === 'existing' && !t.isExistingCanonical) return false
@@ -1384,16 +1438,49 @@ function ProposalModal({
               </button>
               <button
                 type="button"
-                onClick={() => batchSetAccepted(visibleTags, false)}
-                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                onClick={handleAIEvaluate}
+                disabled={aiEvaluating}
+                className="rounded-lg border border-purple-300 bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 flex items-center gap-1"
               >
-                忽略当前筛选 ({visibleTags.length})
+                {aiEvaluating ? '🤖 AI 评估中…' : '🤖 AI 智能助审'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAIConfigModal(true)}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                title="配置 AI 助审 Base URL, API Key, Model 与 Prompt"
+              >
+                ⚙️ 助审配置
               </button>
             </div>
           )}
         </div>
 
         {error && <Notice message={error} />}
+        {aiError && <Notice message={aiError} />}
+
+        {aiResult && (
+          <div className="rounded-xl border border-purple-200 bg-purple-50/80 p-4 space-y-2 text-xs text-purple-950">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-bold text-purple-900">
+                <span>🤖 AI 智能助审二次评估结论</span>
+                <span className="rounded bg-purple-200 px-2 py-0.5 text-[11px] font-semibold text-purple-900">
+                  {aiResult.tagAdvice.length} 项诊断建议
+                </span>
+              </div>
+              {!readonly && (
+                <button
+                  type="button"
+                  onClick={handleApplyAISuggestions}
+                  className="rounded-lg bg-purple-700 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-800 shadow-sm"
+                >
+                  一键应用 AI 智能选牌
+                </button>
+              )}
+            </div>
+            <p className="leading-relaxed text-purple-900 font-medium">{aiResult.overallSummary}</p>
+          </div>
+        )}
 
         <div className={readonly ? 'pointer-events-none opacity-70' : ''}>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -1503,6 +1590,7 @@ function ProposalModal({
                   description: tag.description || '',
                   aliases: aliases.join(', '),
                 }
+                const advice = adviceMap.get(tag.canonicalName)
                 return (
                   <div
                     key={tag.id}
@@ -1511,7 +1599,7 @@ function ProposalModal({
                     }`}
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-xs font-semibold">
                           <button
                             type="button"
@@ -1539,6 +1627,19 @@ function ProposalModal({
                         ) : (
                           <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-100/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-800">
                             建议新建主标签
+                          </span>
+                        )}
+                        {advice && (
+                          <span
+                            className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                              advice.recommendation === 'accept'
+                                ? 'border-emerald-300 bg-emerald-100 text-emerald-800'
+                                : advice.recommendation === 'edit'
+                                ? 'border-amber-300 bg-amber-100 text-amber-800'
+                                : 'border-rose-300 bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            🤖 AI建议: {advice.recommendation === 'accept' ? '采纳' : advice.recommendation === 'edit' ? '修改' : '忽略'}
                           </span>
                         )}
                       </div>
@@ -1583,6 +1684,17 @@ function ProposalModal({
                         理由：{tag.rationale}
                       </p>
                     )}
+                    {advice && (
+                      <div className="mt-2 rounded-lg bg-purple-50 p-2.5 text-xs text-purple-900 border border-purple-200">
+                        <div className="flex items-center justify-between font-semibold text-purple-950">
+                          <span>🤖 AI 助审观点:</span>
+                          {advice.suggestedName && (
+                            <span className="text-[11px] text-purple-700">推荐更优规范名: <strong>{advice.suggestedName}</strong></span>
+                          )}
+                        </div>
+                        <p className="mt-1 text-purple-800 leading-relaxed">{advice.reason}</p>
+                      </div>
+                    )}
                   </div>
                 )
               })}
@@ -1616,6 +1728,14 @@ function ProposalModal({
             {busy ? '提交中…' : `批准提交（${acceptedCount}/${proposal.tags.length}）`}
           </button>
         </div>
+      )}
+
+      {showAIConfigModal && (
+        <AIAuditConfigModal
+          config={aiConfig}
+          onSave={setAiConfig}
+          onClose={() => setShowAIConfigModal(false)}
+        />
       )}
     </Modal>
   )
@@ -1935,5 +2055,83 @@ print(data)`,
         </Modal>
       )}
     </section>
+  )
+}
+
+function AIAuditConfigModal({
+  config,
+  onSave,
+  onClose,
+}: {
+  config: AIAuditConfig
+  onSave: (cfg: AIAuditConfig) => void
+  onClose: () => void
+}) {
+  const [baseUrl, setBaseUrl] = useState(config.baseUrl || '')
+  const [apiKey, setApiKey] = useState(config.apiKey || '')
+  const [model, setModel] = useState(config.model || '')
+  const [prompt, setPrompt] = useState(config.prompt || '')
+
+  const defaultPrompt = "你是一名严谨的企业级标签体系审核专家。你的任务是评估大模型自动总结产生的【待审核标签提案】。你需要针对提案中的每一个拟发布规范标签及其别名、受支撑涵盖候选词进行质量诊断与冲突排查，给出现场审核改进建议。请严格按照 JSON Schema 格式返回 JSON 结果。"
+
+  const handleSave = (e: FormEvent) => {
+    e.preventDefault()
+    const updated = { baseUrl, apiKey, model, prompt }
+    localStorage.setItem('tagmanager_ai_audit_config', JSON.stringify(updated))
+    onSave(updated)
+    onClose()
+  }
+
+  return (
+    <Modal title="⚙️ AI 助审大模型与提示词配置" onClose={onClose}>
+      <form onSubmit={handleSave} className="space-y-4 px-1 py-2 text-xs">
+        <Field label="Base URL (OpenAI 兼容 Endpoint)">
+          <input
+            className={inputClass}
+            placeholder="留空默认使用后端 LLM_BASE_URL (如 https://api.openai.com/v1)"
+            value={baseUrl}
+            onChange={e => setBaseUrl(e.target.value)}
+          />
+        </Field>
+        <Field label="API Key">
+          <input
+            type="password"
+            className={inputClass}
+            placeholder="留空默认使用后端 LLM_API_KEY"
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+          />
+        </Field>
+        <Field label="Model Name (模型名称)">
+          <input
+            className={inputClass}
+            placeholder="留空默认使用后端 LLM_MODEL (如 gpt-4o-mini / deepseek-chat)"
+            value={model}
+            onChange={e => setModel(e.target.value)}
+          />
+        </Field>
+        <Field label="System Prompt (助审系统提示词)">
+          <textarea
+            className={`${inputClass} min-h-24 text-xs leading-relaxed`}
+            placeholder="定义 AI 助审专家的评估准则"
+            value={prompt}
+            onChange={e => setPrompt(e.target.value)}
+          />
+          <div className="flex justify-end mt-1">
+            <button
+              type="button"
+              onClick={() => setPrompt(defaultPrompt)}
+              className="text-[11px] text-brand hover:underline font-medium"
+            >
+              重置为默认提示词
+            </button>
+          </div>
+        </Field>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className={btnSecondary} onClick={onClose}>取消</button>
+          <button type="submit" className={btnPrimary}>保存配置</button>
+        </div>
+      </form>
+    </Modal>
   )
 }

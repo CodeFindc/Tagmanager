@@ -369,3 +369,22 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 	}
 	return tx.Commit(ctx)
 }
+
+func (s *Store) GetProposalCandidateEntries(ctx context.Context, proposalID string) ([]string, error) {
+	var snapshot []byte
+	err := s.pool.QueryRow(ctx, `SELECT pw.input_snapshot FROM pool_windows pw JOIN consolidation_proposals cp ON cp.pool_window_id = pw.id WHERE cp.id = $1`, proposalID).Scan(&snapshot)
+	if err != nil || len(snapshot) == 0 {
+		return []string{}, nil
+	}
+	var entries []struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(snapshot, &entries); err != nil {
+		return []string{}, nil
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name)
+	}
+	return names, nil
+}

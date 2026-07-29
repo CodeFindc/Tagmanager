@@ -1,4 +1,4 @@
-import type { APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, TagMatchRequest, TagMatchResponse, User } from '../types/api'
+import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, TagMatchRequest, TagMatchResponse, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -49,6 +49,7 @@ export const api = {
     return request<{ data: Proposal[] }>(`/review/proposals${q}`)
   },
   decideProposal: (proposalId: string, payload: { approve: boolean; action?: 'approve' | 'reject' | 'discard'; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),
+  evaluateProposalAI: (proposalId: string, payload: { config?: AIAuditConfig }) => request<AIAuditEvaluateResponse>(`/review/proposals/${proposalId}/ai-evaluate`, { method: 'POST', body: JSON.stringify(payload) }),
   users: () => request<{ data: User[] }>('/users'),
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),

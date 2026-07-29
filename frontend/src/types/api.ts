@@ -51,3 +51,6 @@ export interface TagMatchItemResult { rawTag: string; hit: boolean; matchedAs?: 
 export interface TagMatchResponse { results: TagMatchItemResult[]; hitCount: number; missCount: number }
 export interface APIKey { id: string; userId: string; name: string; keyPrefix: string; status: 'active' | 'revoked' | string; lastUsedAt?: string; createdAt: string }
 export interface CreateAPIKeyResponse { apiKey: APIKey; rawKey: string }
+export interface AIAuditConfig { baseUrl?: string; apiKey?: string; model?: string; prompt?: string }
+export interface TagAIAdvice { canonicalName: string; recommendation: 'accept' | 'edit' | 'reject' | string; reason: string; suggestedName?: string }
+export interface AIAuditEvaluateResponse { overallSummary: string; tagAdvice: TagAIAdvice[] }
