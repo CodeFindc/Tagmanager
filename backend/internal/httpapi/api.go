@@ -502,7 +502,21 @@ func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {
 
 	candidateEntries, _ := a.store.GetProposalCandidateEntries(r.Context(), proposalID)
 
-	res, err := a.llmClient.EvaluateProposal(r.Context(), body.Config, proposal, candidateEntries)
+	activeLLM := a.store.GetActiveLLMConfig(r.Context(), "audit_llm_config", a.cfg.LLM)
+	var dbSetting domain.LLMServiceConfig
+	_ = a.store.GetSystemSetting(r.Context(), "audit_llm_config", &dbSetting)
+
+	mergedConfig := domain.AIAuditConfig{
+		BaseURL: activeLLM.BaseURL,
+		APIKey:  activeLLM.APIKey,
+		Model:   activeLLM.Model,
+		Prompt:  body.Config.Prompt,
+	}
+	if mergedConfig.Prompt == "" {
+		mergedConfig.Prompt = dbSetting.SystemPrompt
+	}
+
+	res, err := a.llmClient.EvaluateProposal(r.Context(), mergedConfig, proposal, candidateEntries)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return

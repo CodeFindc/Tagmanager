@@ -1325,20 +1325,16 @@ function ProposalModal({
   const [aiEvaluating, setAiEvaluating] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiResult, setAiResult] = useState<AIAuditEvaluateResponse | null>(null)
-  const [showAIConfigModal, setShowAIConfigModal] = useState(false)
-  const [aiConfig, setAiConfig] = useState<AIAuditConfig>(() => {
-    try {
-      const saved = localStorage.getItem('tagmanager_ai_audit_config')
-      if (saved) return JSON.parse(saved)
-    } catch {}
-    return { baseUrl: '', apiKey: '', model: '', prompt: '' }
+  const [showAIPromptModal, setShowAIPromptModal] = useState(false)
+  const [aiPrompt, setAiPrompt] = useState<string>(() => {
+    return localStorage.getItem('tagmanager_ai_audit_prompt') || ''
   })
 
   const handleAIEvaluate = async () => {
     setAiError('')
     setAiEvaluating(true)
     try {
-      const res = await api.evaluateProposalAI(proposal.id, { config: aiConfig })
+      const res = await api.evaluateProposalAI(proposal.id, { config: { prompt: aiPrompt } })
       setAiResult(res)
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'AI 助审评估请求失败')
@@ -1447,11 +1443,11 @@ function ProposalModal({
               </button>
               <button
                 type="button"
-                onClick={() => setShowAIConfigModal(true)}
+                onClick={() => setShowAIPromptModal(true)}
                 className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                title="配置 AI 助审 Base URL, API Key, Model 与 Prompt"
+                title="微调当前 AI 助审 System Prompt 诊断规则"
               >
-                ⚙️ 助审配置
+                📜 助审提示词
               </button>
             </div>
           )}
@@ -1731,11 +1727,11 @@ function ProposalModal({
         </div>
       )}
 
-      {showAIConfigModal && (
-        <AIAuditConfigModal
-          config={aiConfig}
-          onSave={setAiConfig}
-          onClose={() => setShowAIConfigModal(false)}
+      {showAIPromptModal && (
+        <AIAuditPromptModal
+          prompt={aiPrompt}
+          onSave={setAiPrompt}
+          onClose={() => setShowAIPromptModal(false)}
         />
       )}
     </Modal>
@@ -2059,78 +2055,51 @@ print(data)`,
   )
 }
 
-function AIAuditConfigModal({
-  config,
+function AIAuditPromptModal({
+  prompt,
   onSave,
   onClose,
 }: {
-  config: AIAuditConfig
-  onSave: (cfg: AIAuditConfig) => void
+  prompt: string
+  onSave: (p: string) => void
   onClose: () => void
 }) {
-  const [baseUrl, setBaseUrl] = useState(config.baseUrl || '')
-  const [apiKey, setApiKey] = useState(config.apiKey || '')
-  const [model, setModel] = useState(config.model || '')
-  const [prompt, setPrompt] = useState(config.prompt || '')
-
+  const [customPrompt, setCustomPrompt] = useState(prompt || '')
   const defaultPrompt = "你是一名严谨的企业级标签体系审核专家。你的任务是评估大模型自动总结产生的【待审核标签提案】。你需要针对提案中的每一个拟发布规范标签及其别名、受支撑涵盖候选词进行质量诊断与冲突排查，给出现场审核改进建议。请严格按照 JSON Schema 格式返回 JSON 结果。"
 
   const handleSave = (e: FormEvent) => {
     e.preventDefault()
-    const updated = { baseUrl, apiKey, model, prompt }
-    localStorage.setItem('tagmanager_ai_audit_config', JSON.stringify(updated))
-    onSave(updated)
+    localStorage.setItem('tagmanager_ai_audit_prompt', customPrompt)
+    onSave(customPrompt)
     onClose()
   }
 
   return (
-    <Modal title="⚙️ AI 助审大模型与提示词配置" onClose={onClose}>
+    <Modal title="📜 AI 助审提示词规则微调" onClose={onClose}>
       <form onSubmit={handleSave} className="space-y-4 px-1 py-2 text-xs">
-        <Field label="Base URL (OpenAI 兼容 Endpoint)">
-          <input
-            className={inputClass}
-            placeholder="留空默认使用后端 LLM_BASE_URL (如 https://api.openai.com/v1)"
-            value={baseUrl}
-            onChange={e => setBaseUrl(e.target.value)}
-          />
-        </Field>
-        <Field label="API Key">
-          <input
-            type="password"
-            className={inputClass}
-            placeholder="留空默认使用后端 LLM_API_KEY"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-          />
-        </Field>
-        <Field label="Model Name (模型名称)">
-          <input
-            className={inputClass}
-            placeholder="留空默认使用后端 LLM_MODEL (如 gpt-4o-mini / deepseek-chat)"
-            value={model}
-            onChange={e => setModel(e.target.value)}
-          />
-        </Field>
+        <p className="text-slate-500 leading-relaxed">
+          大模型 Endpoint、API Key 与 Model 名称已由【设置中心】全局解算，在此处仅需微调当前审核会话的诊断规则提示词。
+        </p>
         <Field label="System Prompt (助审系统提示词)">
           <textarea
-            className={`${inputClass} min-h-24 text-xs leading-relaxed`}
+            className={`${inputClass} min-h-36 text-xs leading-relaxed`}
             placeholder="定义 AI 助审专家的评估准则"
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
           />
           <div className="flex justify-end mt-1">
             <button
               type="button"
-              onClick={() => setPrompt(defaultPrompt)}
+              onClick={() => setCustomPrompt(defaultPrompt)}
               className="text-[11px] text-brand hover:underline font-medium"
             >
-              重置为默认提示词
+              恢复为默认提示词
             </button>
           </div>
         </Field>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className={btnSecondary} onClick={onClose}>取消</button>
-          <button type="submit" className={btnPrimary}>保存配置</button>
+          <button type="submit" className={btnPrimary}>保存提示词规则</button>
         </div>
       </form>
     </Modal>
