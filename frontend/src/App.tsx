@@ -1,7 +1,7 @@
 import { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
-import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, User } from './types/api'
+import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, User } from './types/api'
 import {
   EmptyState,
   Field,
@@ -1210,105 +1210,193 @@ function ProposalModal({
   onClose: () => void
   onDecide: (action: 'approve' | 'reject' | 'discard') => void
 }) {
+  const [filterMode, setFilterMode] = useState<'all' | 'existing' | 'new'>('all')
   const tags = proposal.tags || []
+  const existingCount = tags.filter(t => t.isExistingCanonical).length
+  const newCount = tags.filter(t => !t.isExistingCanonical).length
   const acceptedCount = tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
+
+  const visibleTags = tags.filter(t => {
+    if (filterMode === 'existing') return t.isExistingCanonical
+    if (filterMode === 'new') return !t.isExistingCanonical
+    return true
+  })
+
+  function batchSetAccepted(targetTags: ProposalTag[], accepted: boolean) {
+    targetTags.forEach(t => {
+      onUpdateItem(t.id, { accepted })
+    })
+  }
 
   return (
     <Modal onClose={onClose} wide title={`提案 ${proposal.id.slice(0, 8)}`}>
       <div className="space-y-4 px-5 py-4">
-        <div className="flex flex-wrap items-center gap-2 text-sm text-slate-500">
-          <StatusBadge status={proposal.status} />
-          <span>{new Date(proposal.createdAt).toLocaleString()}</span>
-          <span>· v{proposal.version}</span>
-          <span>· <span className="tabular-nums">{tags.length}</span> 项建议</span>
-          <span>· 已采纳 <span className="tabular-nums font-medium text-emerald-700">{acceptedCount}</span></span>
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge status={proposal.status} />
+            <span>{new Date(proposal.createdAt).toLocaleString()}</span>
+            <span>· v{proposal.version}</span>
+            <span>· <span className="tabular-nums">{tags.length}</span> 项建议</span>
+            <span>· 已采纳 <span className="tabular-nums font-medium text-emerald-700">{acceptedCount}</span></span>
+          </div>
+
+          {!readonly && (
+            <div className="flex flex-wrap items-center gap-2">
+              {existingCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => batchSetAccepted(tags.filter(t => t.isExistingCanonical), true)}
+                  className="rounded-lg border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                >
+                  一键采纳所有归入已有 ({existingCount})
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => batchSetAccepted(tags, true)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                全选采纳
+              </button>
+              <button
+                type="button"
+                onClick={() => batchSetAccepted(tags, false)}
+                className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                全选忽略
+              </button>
+            </div>
+          )}
         </div>
 
         {error && <Notice message={error} />}
 
         <div className={readonly ? 'pointer-events-none opacity-70' : ''}>
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议</h3>
-          <div className="grid gap-3 xl:grid-cols-2">
-            {tags.map(tag => {
-              const aliases = tag.aliases || []
-              const coveredEntryIds = tag.coveredEntryIds || []
-              const edit = itemEdits[tag.id] ?? {
-                accepted: tag.accepted ?? true,
-                canonicalName: tag.canonicalName || '',
-                description: tag.description || '',
-                aliases: aliases.join(', '),
-              }
-              return (
-                <div
-                  key={tag.id}
-                  className={`min-w-0 rounded-xl border p-3 sm:p-4 ${
-                    edit.accepted ? 'border-slate-200 bg-slate-50/40' : 'border-red-200 bg-red-50/40'
-                  }`}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-xs font-semibold">
-                      <button
-                        type="button"
-                        title="采纳"
-                        disabled={readonly}
-                        onClick={() => onUpdateItem(tag.id, { accepted: true })}
-                        className={`px-2.5 py-1 ${edit.accepted ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-                      >
-                        采纳
-                      </button>
-                      <button
-                        type="button"
-                        title="忽略"
-                        disabled={readonly}
-                        onClick={() => onUpdateItem(tag.id, { accepted: false })}
-                        className={`px-2.5 py-1 ${!edit.accepted ? 'bg-slate-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
-                      >
-                        忽略
-                      </button>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      <span className="rounded bg-brand/10 px-2 py-0.5 font-semibold text-brand tabular-nums">
-                        {Math.round(tag.confidence * 100)}%
-                      </span>
-                      <span className="tabular-nums">覆盖 {coveredEntryIds.length}</span>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <Field label="规范名">
-                      <input
-                        disabled={!edit.accepted || readonly}
-                        className={`${inputClass} py-1.5 font-medium`}
-                        value={edit.canonicalName}
-                        onChange={e => onUpdateItem(tag.id, { canonicalName: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="新增别名 (逗号分隔)">
-                      <input
-                        disabled={!edit.accepted || readonly}
-                        className={`${inputClass} py-1.5`}
-                        value={edit.aliases}
-                        onChange={e => onUpdateItem(tag.id, { aliases: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="描述" className="sm:col-span-2">
-                      <input
-                        disabled={!edit.accepted || readonly}
-                        className={`${inputClass} py-1.5`}
-                        value={edit.description}
-                        onChange={e => onUpdateItem(tag.id, { description: e.target.value })}
-                      />
-                    </Field>
-                  </div>
-                  {tag.rationale && (
-                    <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500" title={tag.rationale}>
-                      理由：{tag.rationale}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议列表</h3>
+            <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setFilterMode('all')}
+                className={`rounded-md px-2.5 py-1 ${filterMode === 'all' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                全部 ({tags.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterMode('existing')}
+                className={`rounded-md px-2.5 py-1 ${filterMode === 'existing' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                归入已有 ({existingCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterMode('new')}
+                className={`rounded-md px-2.5 py-1 ${filterMode === 'new' ? 'bg-white font-semibold text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+              >
+                建议新建 ({newCount})
+              </button>
+            </div>
           </div>
+
+          {visibleTags.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">
+              当前筛选模式下暂无匹配的建议项
+            </div>
+          ) : (
+            <div className="grid gap-3 xl:grid-cols-2">
+              {visibleTags.map(tag => {
+                const aliases = tag.aliases || []
+                const coveredEntryIds = tag.coveredEntryIds || []
+                const edit = itemEdits[tag.id] ?? {
+                  accepted: tag.accepted ?? true,
+                  canonicalName: tag.canonicalName || '',
+                  description: tag.description || '',
+                  aliases: aliases.join(', '),
+                }
+                return (
+                  <div
+                    key={tag.id}
+                    className={`min-w-0 rounded-xl border p-3 sm:p-4 ${
+                      edit.accepted ? 'border-slate-200 bg-slate-50/40' : 'border-red-200 bg-red-50/40'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="inline-flex overflow-hidden rounded-lg border border-slate-200 bg-white text-xs font-semibold">
+                          <button
+                            type="button"
+                            title="采纳"
+                            disabled={readonly}
+                            onClick={() => onUpdateItem(tag.id, { accepted: true })}
+                            className={`px-2.5 py-1 ${edit.accepted ? 'bg-emerald-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                          >
+                            采纳
+                          </button>
+                          <button
+                            type="button"
+                            title="忽略"
+                            disabled={readonly}
+                            onClick={() => onUpdateItem(tag.id, { accepted: false })}
+                            className={`px-2.5 py-1 ${!edit.accepted ? 'bg-slate-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+                          >
+                            忽略
+                          </button>
+                        </div>
+                        {tag.isExistingCanonical ? (
+                          <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-100/80 px-2 py-0.5 text-[11px] font-semibold text-emerald-800">
+                            归入已有主标签
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full border border-indigo-200 bg-indigo-100/80 px-2 py-0.5 text-[11px] font-semibold text-indigo-800">
+                            建议新建主标签
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-slate-500">
+                        <span className="rounded bg-brand/10 px-2 py-0.5 font-semibold text-brand tabular-nums">
+                          {Math.round(tag.confidence * 100)}%
+                        </span>
+                        <span className="tabular-nums">覆盖 {coveredEntryIds.length}</span>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <Field label="规范名">
+                        <input
+                          disabled={!edit.accepted || readonly}
+                          className={`${inputClass} py-1.5 font-medium`}
+                          value={edit.canonicalName}
+                          onChange={e => onUpdateItem(tag.id, { canonicalName: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="新增别名 (逗号分隔)">
+                        <input
+                          disabled={!edit.accepted || readonly}
+                          className={`${inputClass} py-1.5`}
+                          value={edit.aliases}
+                          onChange={e => onUpdateItem(tag.id, { aliases: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="描述" className="sm:col-span-2">
+                        <input
+                          disabled={!edit.accepted || readonly}
+                          className={`${inputClass} py-1.5`}
+                          value={edit.description}
+                          onChange={e => onUpdateItem(tag.id, { description: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+                    {tag.rationale && (
+                      <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500" title={tag.rationale}>
+                        理由：{tag.rationale}
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
 
           <div className="mt-4">
             <Field label={readonly ? '审核意见' : '审核意见 / 驳回或终止说明'}>

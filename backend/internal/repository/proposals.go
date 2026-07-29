@@ -61,7 +61,19 @@ func (s *Store) ListProposals(ctx context.Context, proposalID, statusFilter stri
 }
 
 func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.ProposalTag, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id,canonical_name,normalized_name,description,aliases,rationale,confidence,accepted FROM proposal_tags WHERE proposal_id=$1 ORDER BY canonical_name`, proposalID)
+	rows, err := s.pool.Query(ctx, `
+		SELECT pt.id, pt.canonical_name, pt.normalized_name, pt.description, pt.aliases, pt.rationale, pt.confidence, pt.accepted,
+		       EXISTS(
+		           SELECT 1 FROM tags t 
+		           JOIN consolidation_proposals cp ON cp.id = pt.proposal_id 
+		           WHERE t.namespace_id = cp.namespace_id 
+		             AND t.normalized_name = pt.normalized_name 
+		             AND t.status = 'published'
+		       ) AS is_existing_canonical
+		FROM proposal_tags pt
+		WHERE pt.proposal_id = $1
+		ORDER BY pt.canonical_name
+	`, proposalID)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +82,7 @@ func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.P
 	for rows.Next() {
 		var tag domain.ProposalTag
 		var aliases []byte
-		if err := rows.Scan(&tag.ID, &tag.CanonicalName, &tag.NormalizedName, &tag.Description, &aliases, &tag.Rationale, &tag.Confidence, &tag.Accepted); err != nil {
+		if err := rows.Scan(&tag.ID, &tag.CanonicalName, &tag.NormalizedName, &tag.Description, &aliases, &tag.Rationale, &tag.Confidence, &tag.Accepted, &tag.IsExistingCanonical); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(aliases, &tag.Aliases); err != nil {

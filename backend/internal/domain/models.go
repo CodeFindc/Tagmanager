@@ -104,15 +104,16 @@ type Proposal struct {
 }
 
 type ProposalTag struct {
-	ID              string   `json:"id"`
-	CanonicalName   string   `json:"canonicalName"`
-	NormalizedName  string   `json:"normalizedName"`
-	Description     string   `json:"description"`
-	Aliases         []string `json:"aliases"`
-	Rationale       string   `json:"rationale"`
-	Confidence      float64  `json:"confidence"`
-	Accepted        *bool    `json:"accepted"`
-	CoveredEntryIDs []string `json:"coveredEntryIds"`
+	ID                  string   `json:"id"`
+	CanonicalName       string   `json:"canonicalName"`
+	NormalizedName      string   `json:"normalizedName"`
+	Description         string   `json:"description"`
+	Aliases             []string `json:"aliases"`
+	Rationale           string   `json:"rationale"`
+	Confidence          float64  `json:"confidence"`
+	Accepted            *bool    `json:"accepted"`
+	CoveredEntryIDs     []string `json:"coveredEntryIds"`
+	IsExistingCanonical bool     `json:"isExistingCanonical"`
 }
 
 type ConsolidationOutput struct {

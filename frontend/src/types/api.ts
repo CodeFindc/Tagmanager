@@ -43,5 +43,5 @@ export interface ConsolidationJob {
   proposalStatus?: string
   parentProposalId?: string
 }
-export interface ProposalTag { id: string; canonicalName: string; description: string; aliases: string[]; rationale: string; confidence: number; coveredEntryIds: string[]; accepted?: boolean }
+export interface ProposalTag { id: string; canonicalName: string; description: string; aliases: string[]; rationale: string; confidence: number; coveredEntryIds: string[]; accepted?: boolean; isExistingCanonical?: boolean }
 export interface Proposal { id: string; namespaceId: string; poolWindowId: string; status: string; version: number; reviewerFeedback: string; createdAt: string; tags: ProposalTag[] }
