@@ -1213,6 +1213,8 @@ function ProposalModal({
   const [filterMode, setFilterMode] = useState<'all' | 'existing' | 'new'>('all')
   const [confidenceOperator, setConfidenceOperator] = useState<'>=' | '<='>('>=')
   const [confidenceValue, setConfidenceValue] = useState<string>('')
+  const [coveredOperator, setCoveredOperator] = useState<'>=' | '<='>('>=')
+  const [coveredValue, setCoveredValue] = useState<string>('')
   const tags = proposal.tags || []
   const existingCount = tags.filter(t => t.isExistingCanonical).length
   const newCount = tags.filter(t => !t.isExistingCanonical).length
@@ -1227,6 +1229,13 @@ function ProposalModal({
       const tagConfPct = Math.round(t.confidence * 100)
       if (confidenceOperator === '>=' && tagConfPct < confVal) return false
       if (confidenceOperator === '<=' && tagConfPct > confVal) return false
+    }
+
+    const covVal = parseInt(coveredValue, 10)
+    if (!isNaN(covVal) && covVal >= 0) {
+      const count = (t.coveredEntryIds || []).length
+      if (coveredOperator === '>=' && count < covVal) return false
+      if (coveredOperator === '<=' && count > covVal) return false
     }
 
     return true
@@ -1285,6 +1294,37 @@ function ProposalModal({
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">模型建议列表</h3>
             <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
+                <span className="text-slate-500 font-medium">涵盖词数:</span>
+                <select
+                  value={coveredOperator}
+                  onChange={e => setCoveredOperator(e.target.value as '>=' | '<=')}
+                  className="rounded border border-slate-200 bg-white px-1.5 py-0.5 outline-none text-xs font-semibold text-slate-700"
+                >
+                  <option value=">=">&ge; (大于等于)</option>
+                  <option value="<=">&le; (小于等于)</option>
+                </select>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="如 3"
+                  value={coveredValue}
+                  onChange={e => setCoveredValue(e.target.value)}
+                  className="w-14 rounded border border-slate-200 bg-white px-1.5 py-0.5 outline-none text-xs font-medium text-slate-800"
+                />
+                <span className="text-slate-500 font-medium">个</span>
+                {coveredValue && (
+                  <button
+                    type="button"
+                    onClick={() => setCoveredValue('')}
+                    className="ml-1 text-xs text-slate-400 hover:text-slate-600"
+                    title="重置涵盖词数筛选"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
               <div className="flex items-center gap-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
                 <span className="text-slate-500 font-medium">置信度:</span>
                 <select
@@ -1401,7 +1441,9 @@ function ProposalModal({
                         <span className="rounded bg-brand/10 px-2 py-0.5 font-semibold text-brand tabular-nums">
                           {Math.round(tag.confidence * 100)}%
                         </span>
-                        <span className="tabular-nums">覆盖 {coveredEntryIds.length}</span>
+                        <span className="rounded-md bg-slate-100 px-2 py-0.5 font-medium text-slate-700 tabular-nums border border-slate-200">
+                          涵盖 {coveredEntryIds.length} 个候选词
+                        </span>
                       </div>
                     </div>
 
