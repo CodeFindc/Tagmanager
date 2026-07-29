@@ -428,7 +428,7 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 	reqBodyMap := map[string]any{
 		"model":       model,
 		"temperature": 0.2,
-		"max_tokens":  2048,
+		"max_tokens":  8192,
 		"messages": []map[string]string{
 			{"role": "system", "content": sysPrompt},
 			{"role": "user", "content": string(userPayload)},
@@ -578,7 +578,7 @@ func (c *OpenAICompatibleClient) EvaluateProposalStream(ctx context.Context, cfg
 		"model":       model,
 		"stream":      true,
 		"temperature": 0.2,
-		"max_tokens":  2048,
+		"max_tokens":  8192,
 		"messages": []map[string]string{
 			{"role": "system", "content": sysPrompt},
 			{"role": "user", "content": string(userPayload)},
@@ -626,6 +626,9 @@ func (c *OpenAICompatibleClient) EvaluateProposalStream(ctx context.Context, cfg
 
 	var fullContent strings.Builder
 	scanner := bufio.NewScanner(resp.Body)
+	buf := make([]byte, 64*1024)
+	scanner.Buffer(buf, 10*1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		line = strings.TrimSpace(line)
@@ -658,10 +661,19 @@ func (c *OpenAICompatibleClient) EvaluateProposalStream(ctx context.Context, cfg
 		return c.EvaluateProposal(ctx, cfg, proposal, candidateEntries)
 	}
 
-	var result domain.AIAuditEvaluateResponse
 	rawContent := strings.TrimSpace(fullContent.String())
+	rawContent = strings.TrimPrefix(rawContent, "```json")
+	rawContent = strings.TrimPrefix(rawContent, "```")
+	rawContent = strings.TrimSuffix(rawContent, "```")
+	rawContent = strings.TrimSpace(rawContent)
+
+	var result domain.AIAuditEvaluateResponse
 	if err := json.Unmarshal([]byte(rawContent), &result); err != nil {
-		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("解析流式 AI 助审响应 JSON 失败: %w", err)
+		endSnippet := rawContent
+		if len(endSnippet) > 120 {
+			endSnippet = "…" + endSnippet[len(endSnippet)-120:]
+		}
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("解析流式 AI 助审响应 JSON 失败: %w (尾部内容: %s)", err, endSnippet)
 	}
 
 	return result, nil
