@@ -394,9 +394,14 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 		})
 	}
 
+	samples := candidateEntries
+	if len(samples) > 30 {
+		samples = samples[:30]
+	}
+
 	userPayload, _ := json.Marshal(map[string]any{
 		"proposedTags":     tags,
-		"candidateSamples": candidateEntries,
+		"candidateSamples": samples,
 	})
 
 	schema := map[string]any{
@@ -410,7 +415,7 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 					"properties": map[string]any{
 						"canonicalName":  map[string]any{"type": "string"},
 						"recommendation": map[string]any{"type": "string", "enum": []string{"accept", "edit", "reject"}, "description": "处理建议：accept（建议采纳）、edit（建议调整）、reject（建议忽略）"},
-						"reason":         map[string]any{"type": "string", "description": "做出该评估的具体理由"},
+						"reason":         map[string]any{"type": "string", "description": "做出该评估的具体理由（30字以内）"},
 						"suggestedName":  map[string]any{"type": "string", "description": "可选：当建议修改时，推荐的更优规范名"},
 					},
 					"required": []string{"canonicalName", "recommendation", "reason"},
@@ -421,7 +426,9 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 	}
 
 	reqBodyMap := map[string]any{
-		"model": model,
+		"model":       model,
+		"temperature": 0.2,
+		"max_tokens":  2048,
 		"messages": []map[string]string{
 			{"role": "system", "content": sysPrompt},
 			{"role": "user", "content": string(userPayload)},

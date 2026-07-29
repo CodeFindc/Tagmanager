@@ -1837,6 +1837,29 @@ function ProposalModal({
               )}
             </div>
 
+            {aiLogs.some(l => l.text.includes('504') || l.text.includes('Gateway') || l.text.includes('nginx')) && (
+              <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 space-y-1.5 leading-relaxed">
+                <div className="font-bold flex items-center gap-1.5 text-amber-900">
+                  <span>⚠️ Nginx 反向代理 60 秒超时排查指引 (504 Gateway Time-out)</span>
+                </div>
+                <p>
+                  检测到您的前端连接经过了 <strong>Nginx 反向代理</strong>，Nginx 默认配置了 <code>proxy_read_timeout 60s;</code>。当后端调用大模型推理超过 60 秒时，Nginx 在前端截断了 HTTP 连接。
+                </p>
+                <p className="font-semibold text-amber-900">🔧 解决方案（修改 Nginx 配置文件 `nginx.conf`）：</p>
+                <div className="rounded-lg bg-slate-900 p-2.5 font-mono text-[11px] text-amber-200 leading-normal">
+                  location /api/ &#123;<br/>
+                  &nbsp;&nbsp;proxy_pass http://127.0.0.1:8080;<br/>
+                  &nbsp;&nbsp;<strong className="text-emerald-400">proxy_read_timeout 600s;</strong>  # 调大为 10 分钟<br/>
+                  &nbsp;&nbsp;<strong className="text-emerald-400">proxy_connect_timeout 600s;</strong><br/>
+                  &nbsp;&nbsp;<strong className="text-emerald-400">proxy_send_timeout 600s;</strong><br/>
+                  &#125;
+                </div>
+                <p className="text-[11px] text-amber-800">
+                  系统已在后端对候选词样本进行精简裁剪，大幅缩短了后续评估生成的耗时！
+                </p>
+              </div>
+            )}
+
             <div className="flex justify-end pt-2">
               <button
                 type="button"
