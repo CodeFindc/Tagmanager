@@ -100,6 +100,7 @@ func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.P
 
 type ProposalDecision struct {
 	Approve  bool
+	Action   string // "approve" | "reject" | "discard"
 	Version  int
 	Comments string
 	Tags     []ProposalTagDecision
@@ -114,6 +115,15 @@ type ProposalTagDecision struct {
 }
 
 func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID string, decision ProposalDecision, normalize func(string) string) error {
+	action := strings.ToLower(strings.TrimSpace(decision.Action))
+	if action == "" {
+		if decision.Approve {
+			action = "approve"
+		} else {
+			action = "reject"
+		}
+	}
+
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return err
@@ -171,7 +181,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 	for _, row := range existing {
 		id, canonical, description, aliases := row.id, row.canonical, row.description, row.aliases
 		choice, supplied := selected[id]
-		accepted := decision.Approve
+		accepted := action == "approve"
 		if supplied {
 			accepted = choice.Accepted
 			if strings.TrimSpace(choice.CanonicalName) != "" {
@@ -192,7 +202,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 		}
 	}
 
-	if decision.Approve {
+	if action == "approve" {
 		for _, item := range deferred {
 			normalized := normalize(item.canonical)
 			if normalized == "" {
@@ -226,7 +236,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 		if _, err := tx.Exec(ctx, `UPDATE pool_windows SET status='approved',updated_at=now() WHERE id=$1`, windowID); err != nil {
 			return err
 		}
-	} else {
+	} else if action == "reject" {
 		if _, err := tx.Exec(ctx, `UPDATE consolidation_proposals SET status='rejected',reviewer_feedback=$2,reviewed_at=now(),version=version+1 WHERE id=$1`, proposalID, decision.Comments); err != nil {
 			return err
 		}
@@ -236,16 +246,29 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 		if _, err := tx.Exec(ctx, `INSERT INTO consolidation_jobs(namespace_id,pool_window_id,parent_proposal_id,job_type) VALUES($1,$2,$3,'rework')`, namespaceID, windowID, proposalID); err != nil {
 			return err
 		}
+	} else if action == "discard" {
+		// Discard proposal & pool window without creating a rework job.
+		// Unresolved candidate pool entries remain in the pool for manual or threshold trigger.
+		if _, err := tx.Exec(ctx, `UPDATE consolidation_proposals SET status='rejected',reviewer_feedback=$2,reviewed_at=now(),version=version+1 WHERE id=$1`, proposalID, decision.Comments); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE pool_windows SET status='rejected',updated_at=now() WHERE id=$1`, windowID); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("unsupported proposal decision action %q", action)
 	}
-	statusValue := "approved"
-	if !decision.Approve {
-		statusValue = "rejected"
+
+	dbDecision := "rejected"
+	if action == "approve" {
+		dbDecision = "approved"
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO review_decisions(proposal_id,reviewer_id,decision,comments) VALUES($1,$2,$3,$4)`, proposalID, reviewerID, statusValue, decision.Comments); err != nil {
+	if _, err := tx.Exec(ctx, `INSERT INTO review_decisions(proposal_id,reviewer_id,decision,comments) VALUES($1,$2,$3,$4)`, proposalID, reviewerID, dbDecision, decision.Comments); err != nil {
 		return err
 	}
-	data, _ := json.Marshal(map[string]any{"decision": statusValue, "acceptedTagCount": len(deferred)})
-	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs(actor_id,action,entity_type,entity_id,data) VALUES($1,$2,'consolidation_proposal',$3,$4)`, reviewerID, "review."+statusValue, proposalID, data); err != nil {
+	auditAction := "review." + action
+	data, _ := json.Marshal(map[string]any{"decision": dbDecision, "action": action, "acceptedTagCount": len(deferred)})
+	if _, err := tx.Exec(ctx, `INSERT INTO audit_logs(actor_id,action,entity_type,entity_id,data) VALUES($1,$2,'consolidation_proposal',$3,$4)`, reviewerID, auditAction, proposalID, data); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

@@ -241,6 +241,7 @@ func (a *API) getProposal(w http.ResponseWriter, r *http.Request) {
 func (a *API) decideProposal(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Approve  bool                             `json:"approve"`
+		Action   string                           `json:"action"`
 		Version  int                              `json:"version"`
 		Comments string                           `json:"comments"`
 		Tags     []repository.ProposalTagDecision `json:"tags"`
@@ -252,7 +253,13 @@ func (a *API) decideProposal(w http.ResponseWriter, r *http.Request) {
 		respondError(w, 400, "proposal version is required")
 		return
 	}
-	err := a.store.DecideProposal(r.Context(), chi.URLParam(r, "proposalID"), currentUser(r).ID, repository.ProposalDecision{Approve: body.Approve, Version: body.Version, Comments: body.Comments, Tags: body.Tags}, service.NormalizeTag)
+	err := a.store.DecideProposal(r.Context(), chi.URLParam(r, "proposalID"), currentUser(r).ID, repository.ProposalDecision{
+		Approve:  body.Approve,
+		Action:   body.Action,
+		Version:  body.Version,
+		Comments: body.Comments,
+		Tags:     body.Tags,
+	}, service.NormalizeTag)
 	if err != nil {
 		if strings.Contains(err.Error(), "another reviewer") || strings.Contains(err.Error(), "no longer pending") {
 			respondError(w, 409, err.Error())

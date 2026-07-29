@@ -18,6 +18,7 @@ import {
   btnPrimary,
   btnSecondary,
   btnSuccess,
+  btnWarning,
   inputClass,
 } from './components/ui'
 
@@ -1006,7 +1007,7 @@ function ReviewPage() {
     }))
   }
 
-  async function decide(proposal: Proposal, approve: boolean) {
+  async function decide(proposal: Proposal, action: 'approve' | 'reject' | 'discard') {
     setBusy(true)
     setError('')
     try {
@@ -1021,7 +1022,8 @@ function ReviewPage() {
         }
       })
       await api.decideProposal(proposal.id, {
-        approve,
+        approve: action === 'approve',
+        action,
         version: proposal.version,
         comments,
         tags: tagPayloads,
@@ -1130,7 +1132,7 @@ function ReviewPage() {
           onComments={setComments}
           onUpdateItem={updateItem}
           onClose={closeModal}
-          onDecide={approve => void decide(active, approve)}
+          onDecide={action => void decide(active, action)}
         />
       )}
     </section>
@@ -1158,7 +1160,7 @@ function ProposalModal({
   onComments: (value: string) => void
   onUpdateItem: (tagId: string, patch: Partial<ItemEditState>) => void
   onClose: () => void
-  onDecide: (approve: boolean) => void
+  onDecide: (action: 'approve' | 'reject' | 'discard') => void
 }) {
   const acceptedCount = proposal.tags.filter(t => (itemEdits[t.id]?.accepted ?? t.accepted ?? true)).length
 
@@ -1230,11 +1232,10 @@ function ProposalModal({
                         onChange={e => onUpdateItem(tag.id, { canonicalName: e.target.value })}
                       />
                     </Field>
-                    <Field label="别名">
+                    <Field label="别名 (逗号分隔)">
                       <input
                         disabled={!edit.accepted || readonly}
                         className={`${inputClass} py-1.5`}
-                        placeholder="逗号分隔"
                         value={edit.aliases}
                         onChange={e => onUpdateItem(tag.id, { aliases: e.target.value })}
                       />
@@ -1259,11 +1260,11 @@ function ProposalModal({
           </div>
 
           <div className="mt-4">
-            <Field label={readonly ? '审核意见' : '审核意见 / 驳回反馈'}>
+            <Field label={readonly ? '审核意见' : '审核意见 / 驳回或终止说明'}>
               <textarea
                 disabled={readonly}
                 className={`${inputClass} min-h-20`}
-                placeholder="驳回时填写给模型的反馈，例如：请勿将开发与运营合并"
+                placeholder="驳回或终止时填写说明，例如：放弃旧快照，包含最新候选重新汇总"
                 value={comments}
                 onChange={e => onComments(e.target.value)}
               />
@@ -1275,10 +1276,13 @@ function ProposalModal({
       {!readonly && (
         <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-100 bg-white px-5 py-3 sm:flex-row sm:justify-end">
           <button type="button" disabled={busy} onClick={onClose} className={btnSecondary}>取消</button>
-          <button type="button" disabled={busy} onClick={() => onDecide(false)} className={btnDanger}>
+          <button type="button" disabled={busy} onClick={() => onDecide('discard')} className={btnWarning}>
+            {busy ? '提交中…' : '终止提案'}
+          </button>
+          <button type="button" disabled={busy} onClick={() => onDecide('reject')} className={btnDanger}>
             {busy ? '提交中…' : '驳回重跑'}
           </button>
-          <button type="button" disabled={busy} onClick={() => onDecide(true)} className={btnSuccess}>
+          <button type="button" disabled={busy} onClick={() => onDecide('approve')} className={btnSuccess}>
             {busy ? '提交中…' : `批准提交（${acceptedCount}/${proposal.tags.length}）`}
           </button>
         </div>

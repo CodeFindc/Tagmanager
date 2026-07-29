@@ -48,7 +48,7 @@ export const api = {
     const q = params?.status ? `?status=${encodeURIComponent(params.status)}` : ''
     return request<{ data: Proposal[] }>(`/review/proposals${q}`)
   },
-  decideProposal: (proposalId: string, payload: { approve: boolean; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),
+  decideProposal: (proposalId: string, payload: { approve: boolean; action?: 'approve' | 'reject' | 'discard'; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),
   users: () => request<{ data: User[] }>('/users'),
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
