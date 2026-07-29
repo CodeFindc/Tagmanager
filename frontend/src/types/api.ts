@@ -54,3 +54,9 @@ export interface CreateAPIKeyResponse { apiKey: APIKey; rawKey: string }
 export interface AIAuditConfig { baseUrl?: string; apiKey?: string; model?: string; prompt?: string }
 export interface TagAIAdvice { canonicalName: string; recommendation: 'accept' | 'edit' | 'reject' | string; reason: string; suggestedName?: string }
 export interface AIAuditEvaluateResponse { overallSummary: string; tagAdvice: TagAIAdvice[] }
+export interface LLMServiceConfig { baseUrl: string; apiKey: string; model: string; timeoutSeconds?: number; maxRetries?: number; systemPrompt?: string }
+export interface SystemSettingsPayload { consolidationLlm: LLMServiceConfig; auditLlm: LLMServiceConfig }
+export interface FetchModelsRequest { baseUrl: string; apiKey: string }
+export interface FetchModelsResponse { models: string[] }
+export interface TestLLMRequest { baseUrl: string; apiKey: string; model: string }
+export interface TestLLMResponse { success: boolean; latencyMs: number; message: string }

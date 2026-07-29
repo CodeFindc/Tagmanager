@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -65,6 +66,10 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Get("/api-keys", api.listAPIKeys)
 			r.Post("/api-keys", api.createAPIKey)
 			r.Delete("/api-keys/{id}", api.revokeAPIKey)
+			r.Get("/settings", api.getSettings)
+			r.Patch("/settings", api.require(domain.RoleAdmin, api.updateSettings))
+			r.Post("/settings/fetch-models", api.require(domain.RoleAdmin, api.fetchLLMModels))
+			r.Post("/settings/test-llm", api.require(domain.RoleAdmin, api.testLLMConnection))
 			r.Get("/users", api.require(domain.RoleAdmin, api.listUsers))
 			r.Post("/users", api.require(domain.RoleAdmin, api.createUser))
 			r.Patch("/users/{id}/role", api.require(domain.RoleAdmin, api.updateUserRole))
@@ -504,4 +509,76 @@ func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond(w, http.StatusOK, res)
+}
+
+func (a *API) getSettings(w http.ResponseWriter, r *http.Request) {
+	var payload domain.SystemSettingsPayload
+	_ = a.store.GetSystemSetting(r.Context(), "consolidation_llm_config", &payload.ConsolidationLLM)
+	_ = a.store.GetSystemSetting(r.Context(), "audit_llm_config", &payload.AuditLLM)
+
+	if payload.ConsolidationLLM.BaseURL == "" {
+		payload.ConsolidationLLM.BaseURL = a.cfg.LLM.BaseURL
+	}
+	if payload.ConsolidationLLM.Model == "" {
+		payload.ConsolidationLLM.Model = a.cfg.LLM.Model
+	}
+	if payload.AuditLLM.BaseURL == "" {
+		payload.AuditLLM.BaseURL = a.cfg.LLM.BaseURL
+	}
+	if payload.AuditLLM.Model == "" {
+		payload.AuditLLM.Model = a.cfg.LLM.Model
+	}
+
+	respond(w, http.StatusOK, payload)
+}
+
+func (a *API) updateSettings(w http.ResponseWriter, r *http.Request) {
+	var payload domain.SystemSettingsPayload
+	if decode(w, r, &payload) != nil {
+		return
+	}
+	userID := currentUser(r).ID
+	if err := a.store.SaveSystemSetting(r.Context(), "consolidation_llm_config", payload.ConsolidationLLM, userID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.store.SaveSystemSetting(r.Context(), "audit_llm_config", payload.AuditLLM, userID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "settings updated"})
+}
+
+func (a *API) fetchLLMModels(w http.ResponseWriter, r *http.Request) {
+	var body domain.FetchModelsRequest
+	if decode(w, r, &body) != nil {
+		return
+	}
+	models, err := a.llmClient.FetchModels(r.Context(), body.BaseURL, body.APIKey)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, domain.FetchModelsResponse{Models: models})
+}
+
+func (a *API) testLLMConnection(w http.ResponseWriter, r *http.Request) {
+	var body domain.TestLLMRequest
+	if decode(w, r, &body) != nil {
+		return
+	}
+	latency, err := a.llmClient.TestConnection(r.Context(), body)
+	if err != nil {
+		respond(w, http.StatusOK, domain.TestLLMResponse{
+			Success:   false,
+			LatencyMs: latency,
+			Message:   err.Error(),
+		})
+		return
+	}
+	respond(w, http.StatusOK, domain.TestLLMResponse{
+		Success:   true,
+		LatencyMs: latency,
+		Message:   fmt.Sprintf("连接成功！延迟 %d ms", latency),
+	})
 }

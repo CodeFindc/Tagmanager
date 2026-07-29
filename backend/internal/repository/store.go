@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codefun/tagmanager/backend/internal/config"
 	"github.com/codefun/tagmanager/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -602,4 +603,50 @@ func (s *Store) AuthenticateAPIKey(ctx context.Context, rawKey string) (domain.U
 	}
 
 	return user, nil
+}
+
+func (s *Store) GetSystemSetting(ctx context.Context, key string, target any) error {
+	var raw []byte
+	err := s.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = $1`, key).Scan(&raw)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, target)
+}
+
+func (s *Store) SaveSystemSetting(ctx context.Context, key string, value any, userID string) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO system_settings(key, value, updated_at, updated_by)
+		VALUES($1, $2, now(), $3)
+		ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by
+	`, key, raw, userID)
+	return err
+}
+
+func (s *Store) GetActiveLLMConfig(ctx context.Context, key string, fallback config.LLMConfig) config.LLMConfig {
+	var dbCfg domain.LLMServiceConfig
+	if err := s.GetSystemSetting(ctx, key, &dbCfg); err == nil {
+		res := fallback
+		if strings.TrimSpace(dbCfg.BaseURL) != "" {
+			res.BaseURL = strings.TrimRight(strings.TrimSpace(dbCfg.BaseURL), "/")
+		}
+		if strings.TrimSpace(dbCfg.APIKey) != "" {
+			res.APIKey = strings.TrimSpace(dbCfg.APIKey)
+		}
+		if strings.TrimSpace(dbCfg.Model) != "" {
+			res.Model = strings.TrimSpace(dbCfg.Model)
+		}
+		if dbCfg.TimeoutSeconds > 0 {
+			res.Timeout = time.Duration(dbCfg.TimeoutSeconds) * time.Second
+		}
+		if dbCfg.MaxRetries > 0 {
+			res.MaxRetries = dbCfg.MaxRetries
+		}
+		return res
+	}
+	return fallback
 }

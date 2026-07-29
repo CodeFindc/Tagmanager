@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codefun/tagmanager/backend/internal/config"
 	"github.com/codefun/tagmanager/backend/internal/domain"
 	"github.com/codefun/tagmanager/backend/internal/llm"
 	"github.com/jackc/pgx/v5"
@@ -120,7 +121,33 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 		"snapshotBytes", len(snapshot),
 		"hasFeedback", feedback != "",
 	)
-	output, err := w.llm.Consolidate(ctx, llm.ConsolidationRequest{
+
+	llmClient := w.llm
+	var dbSetting domain.LLMServiceConfig
+	var rawSetting []byte
+	if err := w.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = 'consolidation_llm_config'`).Scan(&rawSetting); err == nil && len(rawSetting) > 0 {
+		if err := json.Unmarshal(rawSetting, &dbSetting); err == nil {
+			if strings.TrimSpace(dbSetting.BaseURL) != "" && strings.TrimSpace(dbSetting.APIKey) != "" && strings.TrimSpace(dbSetting.Model) != "" {
+				llmCfg := config.LLMConfig{
+					BaseURL:    strings.TrimRight(strings.TrimSpace(dbSetting.BaseURL), "/"),
+					APIKey:     strings.TrimSpace(dbSetting.APIKey),
+					Model:      strings.TrimSpace(dbSetting.Model),
+					Timeout:    300 * time.Second,
+					MaxRetries: 3,
+				}
+				if dbSetting.TimeoutSeconds > 0 {
+					llmCfg.Timeout = time.Duration(dbSetting.TimeoutSeconds) * time.Second
+				}
+				if dbSetting.MaxRetries > 0 {
+					llmCfg.MaxRetries = dbSetting.MaxRetries
+				}
+				w.logger.Info("using dynamic system_settings consolidation llm config", "baseUrl", llmCfg.BaseURL, "model", llmCfg.Model)
+				llmClient = llm.NewOpenAICompatible(llmCfg, w.logger)
+			}
+		}
+	}
+
+	output, err := llmClient.Consolidate(ctx, llm.ConsolidationRequest{
 		NamespaceName: namespaceName,
 		Feedback:      feedback,
 		ExistingTags:  existingTags,

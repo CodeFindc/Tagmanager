@@ -194,3 +194,38 @@ type AIAuditEvaluateResponse struct {
 	OverallSummary string        `json:"overallSummary"`
 	TagAdvice      []TagAIAdvice `json:"tagAdvice"`
 }
+
+type LLMServiceConfig struct {
+	BaseURL        string `json:"baseUrl"`
+	APIKey         string `json:"apiKey"`
+	Model          string `json:"model"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+	MaxRetries     int    `json:"maxRetries,omitempty"`
+	SystemPrompt   string `json:"systemPrompt,omitempty"`
+}
+
+type SystemSettingsPayload struct {
+	ConsolidationLLM LLMServiceConfig `json:"consolidationLlm"`
+	AuditLLM         LLMServiceConfig `json:"auditLlm"`
+}
+
+type FetchModelsRequest struct {
+	BaseURL string `json:"baseUrl"`
+	APIKey  string `json:"apiKey"`
+}
+
+type FetchModelsResponse struct {
+	Models []string `json:"models"`
+}
+
+type TestLLMRequest struct {
+	BaseURL string `json:"baseUrl"`
+	APIKey  string `json:"apiKey"`
+	Model   string `json:"model"`
+}
+
+type TestLLMResponse struct {
+	Success   bool   `json:"success"`
+	LatencyMs int64  `json:"latencyMs"`
+	Message   string `json:"message"`
+}

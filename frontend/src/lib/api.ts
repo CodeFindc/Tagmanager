@@ -1,4 +1,4 @@
-import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, TagMatchRequest, TagMatchResponse, User } from '../types/api'
+import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, FetchModelsRequest, FetchModelsResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, SystemSettingsPayload, Tag, TagAIAdvice, TagMatchRequest, TagMatchResponse, TestLLMRequest, TestLLMResponse, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -58,6 +58,10 @@ export const api = {
   createAPIKey: (name: string) => request<CreateAPIKeyResponse>('/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
   revokeAPIKey: (id: string) => request<{ status: string }>(`/api-keys/${id}`, { method: 'DELETE' }),
   changePassword: (payload: { oldPassword: string; newPassword: string }) => request<{ status: string }>('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }),
+  getSettings: () => request<SystemSettingsPayload>('/settings'),
+  updateSettings: (payload: SystemSettingsPayload) => request<{ status: string }>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  fetchLLMModels: (payload: FetchModelsRequest) => request<FetchModelsResponse>('/settings/fetch-models', { method: 'POST', body: JSON.stringify(payload) }),
+  testLLM: (payload: TestLLMRequest) => request<TestLLMResponse>('/settings/test-llm', { method: 'POST', body: JSON.stringify(payload) }),
 }
 
 export { APIError }

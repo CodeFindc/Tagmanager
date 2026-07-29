@@ -483,3 +483,108 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 
 	return result, nil
 }
+
+func (c *OpenAICompatibleClient) FetchModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	apiKey = strings.TrimSpace(apiKey)
+	if baseURL == "" {
+		baseURL = c.baseURL
+	}
+	if apiKey == "" {
+		apiKey = c.apiKey
+	}
+	if baseURL == "" || apiKey == "" {
+		return nil, fmt.Errorf("BaseURL 和 APIKey 为必填项，无法获取模型列表")
+	}
+
+	url := baseURL + "/models"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("无法连接到 %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("Endpoint 返回错误状态码 %d: %s", resp.StatusCode, truncate(string(body), 200))
+	}
+
+	var res struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, fmt.Errorf("解析模型列表 JSON 失败: %w", err)
+	}
+
+	models := make([]string, 0, len(res.Data))
+	for _, m := range res.Data {
+		if strings.TrimSpace(m.ID) != "" {
+			models = append(models, m.ID)
+		}
+	}
+	return models, nil
+}
+
+func (c *OpenAICompatibleClient) TestConnection(ctx context.Context, cfg domain.TestLLMRequest) (int64, error) {
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	apiKey := strings.TrimSpace(cfg.APIKey)
+	model := strings.TrimSpace(cfg.Model)
+	if baseURL == "" {
+		baseURL = c.baseURL
+	}
+	if apiKey == "" {
+		apiKey = c.apiKey
+	}
+	if model == "" {
+		model = c.model
+	}
+
+	if baseURL == "" || apiKey == "" || model == "" {
+		return 0, fmt.Errorf(" BaseURL、APIKey 与 Model 为必填项，无法发起连接测试")
+	}
+
+	reqBody := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "ping"},
+		},
+		"max_tokens": 1,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return 0, err
+	}
+
+	url := baseURL + "/chat/completions"
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	started := time.Now()
+	resp, err := client.Do(req)
+	latency := time.Since(started).Milliseconds()
+	if err != nil {
+		return latency, fmt.Errorf("连接失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return latency, fmt.Errorf("返回错误状态码 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
+	}
+	return latency, nil
+}
