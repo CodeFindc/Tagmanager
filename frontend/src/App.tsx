@@ -1,7 +1,7 @@
 import { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
-import type { ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, TagMatchItemResult, TagMatchResponse, User } from './types/api'
+import type { APIKey, ConsolidationJob, ImportResult, Namespace, PoolEntry, Proposal, ProposalTag, Role, Tag, TagMatchItemResult, TagMatchResponse, User } from './types/api'
 import {
   EmptyState,
   Field,
@@ -89,6 +89,7 @@ export function App() {
     ['/imports', '批次导入'],
     ['/pool', '候选池'],
     ['/review', '审核中心'],
+    ['/api-docs', 'API 开放接入'],
     ...(user.role === 'admin' ? [['/namespaces', '标签域'], ['/users', '用户管理']] : []),
   ] as const
 
@@ -146,6 +147,7 @@ export function App() {
             <Route path="/imports" element={<ImportPage />} />
             <Route path="/pool" element={<PoolPage canTrigger={user.role === 'admin'} />} />
             <Route path="/review" element={<ReviewPage />} />
+            <Route path="/api-docs" element={<ApiDocsPage />} />
             {user.role === 'admin' && <Route path="/namespaces" element={<NamespacesPage />} />}
             {user.role === 'admin' && <Route path="/users" element={<UsersPage />} />}
             <Route path="*" element={<Navigate to="/" replace />} />
@@ -1616,5 +1618,322 @@ function ProposalModal({
         </div>
       )}
     </Modal>
+  )
+}
+
+function ApiDocsPage() {
+  const [keys, setKeys] = useState<APIKey[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [newKeyName, setNewKeyName] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createdResult, setCreatedResult] = useState<{ name: string; rawKey: string } | null>(null)
+  const [activeCodeTab, setActiveCodeTab] = useState<'curl' | 'js' | 'python'>('curl')
+  const [copied, setCopied] = useState(false)
+
+  const loadKeys = () => {
+    setLoading(true)
+    api.apiKeys()
+      .then(x => setKeys(x.data))
+      .catch(err => setError(err instanceof Error ? err.message : '无法加载 API Keys'))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { loadKeys() }, [])
+
+  const handleCreate = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!newKeyName.trim()) return
+    setCreating(true)
+    setError('')
+    try {
+      const res = await api.createAPIKey(newKeyName.trim())
+      setCreatedResult({ name: res.apiKey.name, rawKey: res.rawKey })
+      setShowCreateModal(false)
+      setNewKeyName('')
+      loadKeys()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '创建 API Key 失败')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const handleRevoke = async (keyId: string, name: string) => {
+    if (!window.confirm(`确定要撤销 API Key "${name}" 吗？撤销后使用此 Key 的第三方系统将立刻无法调用接口。`)) return
+    try {
+      await api.revokeAPIKey(keyId)
+      loadKeys()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '撤销失败')
+    }
+  }
+
+  const apiHost = window.location.origin
+  const exampleEndpoint = `${apiHost}/api/v1/tags/match`
+  const activeKeyPrefix = keys.find(k => k.status === 'active')?.keyPrefix
+  const exampleKey = activeKeyPrefix ? `${activeKeyPrefix}...` : 'tm_live_YOUR_API_KEY'
+
+  const codeSnippets = {
+    curl: `curl -X POST "${exampleEndpoint}" \\
+  -H "Authorization: Bearer ${exampleKey}" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "namespaceId": "YOUR_NAMESPACE_ID",
+    "tags": ["自行车与机动车碰撞", "违规空域无人机黑飞"],
+    "sourceName": "third_party_app"
+  }'`,
+    js: `// JavaScript (Fetch / Node.js 18+)
+const response = await fetch('${exampleEndpoint}', {
+  method: 'POST',
+  headers: {
+    'Authorization': 'Bearer ${exampleKey}',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    namespaceId: 'YOUR_NAMESPACE_ID',
+    tags: ['自行车与机动车碰撞', '违规空域无人机黑飞'],
+    sourceName: 'third_party_app'
+  })
+});
+
+const data = await response.json();
+console.log(data);`,
+    python: `# Python (requests)
+import requests
+
+url = "${exampleEndpoint}"
+headers = {
+    "Authorization": "Bearer ${exampleKey}",
+    "Content-Type": "application/json"
+}
+payload = {
+    "namespaceId": "YOUR_NAMESPACE_ID",
+    "tags": ["自行车与机动车碰撞", "违规空域无人机黑飞"],
+    "sourceName": "third_party_app"
+}
+
+response = requests.post(url, headers=headers, json=payload)
+data = response.json()
+print(data)`,
+  }
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(codeSnippets[activeCodeTab])
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <section className="space-y-6">
+      <PageHeader
+        title="API 开放接入与 Key 管理"
+        description="创建 API Key 并通过开放 API 将第三方系统的标签实时接入比对及候选词自收录。"
+      />
+
+      {error && <Notice message={error} />}
+
+      {createdResult && (
+        <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <h4 className="font-semibold text-emerald-900">API Key 创建成功！</h4>
+            <button
+              onClick={() => setCreatedResult(null)}
+              className="text-xs text-emerald-700 hover:text-emerald-900"
+            >
+              关闭提示
+            </button>
+          </div>
+          <p className="text-xs text-emerald-800">
+            密钥 <strong>{createdResult.name}</strong> 已生成。请妥善保存以下全量 Secret，系统不会二次展示：
+          </p>
+          <div className="flex items-center gap-2">
+            <code className="flex-1 rounded bg-white px-3 py-2 font-mono text-xs text-emerald-950 font-bold border border-emerald-200 select-all">
+              {createdResult.rawKey}
+            </code>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(createdResult.rawKey)
+                alert('API Key 已复制到剪贴板！')
+              }}
+              className="rounded bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700"
+            >
+              复制 Secret
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* API Key 管理板块 */}
+      <Panel title="API Key 密钥列表" description="第三方系统接入所需的独立鉴权 API Key">
+        <div className="mb-4 flex justify-end">
+          <button className={btnPrimary} onClick={() => setShowCreateModal(true)}>
+            + 生成新 API Key
+          </button>
+        </div>
+        {loading ? (
+          <div className="p-4 text-center text-xs text-slate-500">正在加载 API Keys…</div>
+        ) : keys.length === 0 ? (
+          <EmptyState title="暂无 API Key" description="请点击上方生成您的第一个 API Key 用于第三方系统鉴权。" />
+        ) : (
+          <TableShell>
+            <table className="w-full text-left text-sm">
+              <thead className="bg-slate-50 text-slate-500">
+                <tr>
+                  <th className="p-3 font-medium">Key 名称</th>
+                  <th className="p-3 font-medium">Key 前缀</th>
+                  <th className="p-3 font-medium">状态</th>
+                  <th className="p-3 font-medium">创建时间</th>
+                  <th className="p-3 font-medium">最后使用时间</th>
+                  <th className="p-3 font-medium text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map(k => (
+                  <tr key={k.id} className="border-t text-xs">
+                    <td className="p-3 font-medium text-slate-900">{k.name}</td>
+                    <td className="p-3 font-mono text-slate-600">{k.keyPrefix}…</td>
+                    <td className="p-3">
+                      {k.status === 'active' ? (
+                        <span className="rounded bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800">有效</span>
+                      ) : (
+                        <span className="rounded bg-slate-100 px-2 py-0.5 font-semibold text-slate-500">已撤销</span>
+                      )}
+                    </td>
+                    <td className="p-3 text-slate-500">{new Date(k.createdAt).toLocaleString('zh-CN')}</td>
+                    <td className="p-3 text-slate-500">
+                      {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString('zh-CN') : '尚未调用'}
+                    </td>
+                    <td className="p-3 text-right">
+                      {k.status === 'active' && (
+                        <button
+                          onClick={() => handleRevoke(k.id, k.name)}
+                          className="font-medium text-rose-600 hover:underline"
+                        >
+                          撤销
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </TableShell>
+        )}
+      </Panel>
+
+      {/* 接口文档与多语言代码板块 */}
+      <Panel title="实时匹配 API 接入文档 (POST /api/v1/tags/match)">
+        <div className="space-y-4 text-xs text-slate-700 leading-relaxed">
+          <div className="rounded-lg bg-slate-50 p-3 space-y-2 border">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-bold text-white">POST</span>
+              <code className="font-mono text-slate-900 font-semibold">{exampleEndpoint}</code>
+            </div>
+            <p className="text-slate-600">
+              用于第三方系统实时传入一个或多个不规范标签文本。如果命中已发布规范主标签或别名，即刻返回规范主标签信息；若未命中，系统自动将该标签收集入候选词池累加词频，并在达到阈值时自动触发大模型归并。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="font-semibold text-slate-900">鉴权方式 (Headers)</h4>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>标准方式：<code>Authorization: Bearer tm_live_...</code></li>
+              <li>自定义头方式：<code>X-API-Key: tm_live_...</code></li>
+            </ul>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h4 className="font-semibold text-slate-900">多语言接入代码示例</h4>
+              <button
+                onClick={handleCopyCode}
+                className="rounded border bg-white px-2.5 py-1 font-medium text-slate-700 hover:bg-slate-50"
+              >
+                {copied ? '已复制代码！' : '复制代码'}
+              </button>
+            </div>
+
+            <div className="flex gap-2 border-b">
+              {(['curl', 'js', 'python'] as const).map(tab => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveCodeTab(tab)}
+                  className={`px-3 py-1.5 font-semibold text-xs border-b-2 transition-colors ${
+                    activeCodeTab === tab
+                      ? 'border-brand text-brand'
+                      : 'border-transparent text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  {tab === 'curl' ? 'cURL' : tab === 'js' ? 'JavaScript / Node.js' : 'Python (requests)'}
+                </button>
+              ))}
+            </div>
+
+            <pre className="overflow-x-auto rounded-lg bg-slate-900 p-4 font-mono text-xs text-slate-100 leading-relaxed">
+              <code>{codeSnippets[activeCodeTab]}</code>
+            </pre>
+          </div>
+
+          <div className="space-y-2 border-t pt-3">
+            <h4 className="font-semibold text-slate-900">响应 Schema 结构示例</h4>
+            <pre className="overflow-x-auto rounded-lg bg-slate-100 p-3 font-mono text-[11px] text-slate-800">
+{`{
+  "hitCount": 1,
+  "missCount": 1,
+  "results": [
+    {
+      "rawTag": "自行车与机动车碰撞",
+      "hit": true,
+      "matchedAs": "alias", // "canonical" | "alias"
+      "canonicalTag": {
+        "id": "tag-001",
+        "canonicalName": "交通事故与交通违法",
+        "description": "车辆碰撞等事故",
+        "version": 1
+      },
+      "message": "成功匹配已发布规范标签"
+    },
+    {
+      "rawTag": "违规空域无人机黑飞",
+      "hit": false,
+      "message": "未匹配到规范标签，已自动收集入候选词池，建议先跳过此数据"
+    }
+  ]
+}`}
+            </pre>
+          </div>
+        </div>
+      </Panel>
+
+      {/* 创建 Key 弹窗 */}
+      {showCreateModal && (
+        <Modal title="生成新 API Key" onClose={() => setShowCreateModal(false)}>
+          <form onSubmit={handleCreate} className="space-y-4">
+            <Field label="Key 名称 / 接入系统标识">
+              <input
+                className={inputClass}
+                placeholder="例如：订单系统标签匹配服务"
+                value={newKeyName}
+                onChange={e => setNewKeyName(e.target.value)}
+                autoFocus
+              />
+            </Field>
+            <p className="text-xs text-slate-500">
+              API Key 生成后将获得 <code>tm_live_...</code> 开头的独立调用密钥，用于第三方 HTTP 请求鉴权。
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className={btnSecondary} onClick={() => setShowCreateModal(false)}>
+                取消
+              </button>
+              <button type="submit" disabled={creating || !newKeyName.trim()} className={btnPrimary}>
+                {creating ? '生成中…' : '立即生成'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </section>
   )
 }

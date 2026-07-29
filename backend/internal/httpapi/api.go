@@ -55,6 +55,9 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Get("/review/proposals", api.listProposals)
 			r.Get("/review/proposals/{proposalID}", api.getProposal)
 			r.Post("/review/proposals/{proposalID}/decision", api.require(domain.RoleReviewer, api.decideProposal))
+			r.Get("/api-keys", api.listAPIKeys)
+			r.Post("/api-keys", api.createAPIKey)
+			r.Delete("/api-keys/{id}", api.revokeAPIKey)
 			r.Get("/users", api.require(domain.RoleAdmin, api.listUsers))
 			r.Post("/users", api.require(domain.RoleAdmin, api.createUser))
 			r.Patch("/users/{id}/role", api.require(domain.RoleAdmin, api.updateUserRole))
@@ -86,12 +89,33 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 func (a *API) me(w http.ResponseWriter, r *http.Request) { respond(w, 200, currentUser(r)) }
 func (a *API) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		parts := strings.Fields(r.Header.Get("Authorization"))
-		if len(parts) != 2 || parts[0] != "Bearer" {
+		tokenStr := ""
+		apiKeyHeader := r.Header.Get("X-API-Key")
+		if apiKeyHeader != "" {
+			tokenStr = apiKeyHeader
+		} else {
+			parts := strings.Fields(r.Header.Get("Authorization"))
+			if len(parts) == 2 && (parts[0] == "Bearer" || parts[0] == "ApiKey") {
+				tokenStr = parts[1]
+			}
+		}
+
+		if strings.HasPrefix(tokenStr, "tm_live_") {
+			user, err := a.store.AuthenticateAPIKey(r.Context(), tokenStr)
+			if err != nil {
+				respondError(w, 401, err.Error())
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authContextKey{}, user)))
+			return
+		}
+
+		if tokenStr == "" {
 			respondError(w, 401, "authentication required")
 			return
 		}
-		claims, err := service.ParseToken(a.cfg.JWTSecret, parts[1])
+
+		claims, err := service.ParseToken(a.cfg.JWTSecret, tokenStr)
 		if err != nil {
 			respondError(w, 401, "invalid token")
 			return
@@ -408,4 +432,41 @@ func (a *API) matchTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, res)
+}
+
+func (a *API) listAPIKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := a.store.ListAPIKeys(r.Context(), currentUser(r).ID)
+	if err != nil {
+		respondError(w, 500, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]any{"data": keys})
+}
+
+func (a *API) createAPIKey(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if decode(w, r, &body) != nil {
+		return
+	}
+	res, err := a.store.CreateAPIKey(r.Context(), currentUser(r).ID, body.Name)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusCreated, res)
+}
+
+func (a *API) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	keyID := chi.URLParam(r, "id")
+	if keyID == "" {
+		respondError(w, http.StatusBadRequest, "missing key id")
+		return
+	}
+	if err := a.store.RevokeAPIKey(r.Context(), currentUser(r).ID, keyID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "api key revoked"})
 }

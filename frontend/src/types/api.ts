@@ -49,3 +49,5 @@ export interface TagMatchRequest { namespaceId: string; tag?: string; tags?: str
 export interface CanonicalTagInfo { id: string; canonicalName: string; description: string; version: number }
 export interface TagMatchItemResult { rawTag: string; hit: boolean; matchedAs?: 'canonical' | 'alias' | string; canonicalTag?: CanonicalTagInfo; message?: string }
 export interface TagMatchResponse { results: TagMatchItemResult[]; hitCount: number; missCount: number }
+export interface APIKey { id: string; userId: string; name: string; keyPrefix: string; status: 'active' | 'revoked' | string; lastUsedAt?: string; createdAt: string }
+export interface CreateAPIKeyResponse { apiKey: APIKey; rawKey: string }

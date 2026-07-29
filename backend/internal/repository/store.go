@@ -2,6 +2,9 @@ package repository
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -498,4 +501,105 @@ func (s *Store) MatchTags(ctx context.Context, req domain.TagMatchRequest, actor
 	}
 
 	return res, nil
+}
+
+func (s *Store) CreateAPIKey(ctx context.Context, userID, name string) (domain.CreateAPIKeyResponse, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return domain.CreateAPIKeyResponse{}, fmt.Errorf("api key name cannot be empty")
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return domain.CreateAPIKeyResponse{}, err
+	}
+	rawKey := "tm_live_" + hex.EncodeToString(buf)
+	keyPrefix := rawKey[:16]
+	hashBytes := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(hashBytes[:])
+
+	var k domain.APIKey
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO api_keys(user_id, name, key_prefix, key_hash, status)
+		VALUES($1, $2, $3, $4, 'active')
+		RETURNING id, user_id, name, key_prefix, status, last_used_at, created_at
+	`, userID, name, keyPrefix, keyHash).Scan(&k.ID, &k.UserID, &k.Name, &k.KeyPrefix, &k.Status, &k.LastUsedAt, &k.CreatedAt)
+	if err != nil {
+		return domain.CreateAPIKeyResponse{}, err
+	}
+
+	return domain.CreateAPIKeyResponse{
+		APIKey: k,
+		RawKey: rawKey,
+	}, nil
+}
+
+func (s *Store) ListAPIKeys(ctx context.Context, userID string) ([]domain.APIKey, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, name, key_prefix, status, last_used_at, created_at
+		FROM api_keys
+		WHERE user_id = $1
+		ORDER BY created_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []domain.APIKey{}
+	for rows.Next() {
+		var k domain.APIKey
+		if err := rows.Scan(&k.ID, &k.UserID, &k.Name, &k.KeyPrefix, &k.Status, &k.LastUsedAt, &k.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, k)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) RevokeAPIKey(ctx context.Context, userID, keyID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE api_keys SET status = 'revoked'
+		WHERE id = $1 AND user_id = $2 AND status = 'active'
+	`, keyID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("api key not found or already revoked")
+	}
+	return nil
+}
+
+func (s *Store) AuthenticateAPIKey(ctx context.Context, rawKey string) (domain.User, error) {
+	rawKey = strings.TrimSpace(rawKey)
+	if !strings.HasPrefix(rawKey, "tm_live_") {
+		return domain.User{}, fmt.Errorf("invalid api key format")
+	}
+	hashBytes := sha256.Sum256([]byte(rawKey))
+	keyHash := hex.EncodeToString(hashBytes[:])
+
+	var keyID, userID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, user_id FROM api_keys
+		WHERE key_hash = $1 AND status = 'active'
+	`, keyHash).Scan(&keyID, &userID)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return domain.User{}, fmt.Errorf("invalid or revoked api key")
+		}
+		return domain.User{}, err
+	}
+
+	_, _ = s.pool.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, keyID)
+
+	var user domain.User
+	err = s.pool.QueryRow(ctx, `
+		SELECT id, email, role, must_change_password, password_changed_at, created_at
+		FROM users WHERE id = $1
+	`, userID).Scan(&user.ID, &user.Email, &user.Role, &user.MustChangePassword, &user.PasswordChangedAt, &user.CreatedAt)
+	if err != nil {
+		return domain.User{}, fmt.Errorf("user associated with api key not found")
+	}
+
+	return user, nil
 }

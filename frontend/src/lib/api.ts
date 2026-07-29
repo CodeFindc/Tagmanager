@@ -1,4 +1,4 @@
-import type { ConsolidationJob, ConsolidationTriggerResult, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, TagMatchRequest, TagMatchResponse, User } from '../types/api'
+import type { APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, Tag, TagMatchRequest, TagMatchResponse, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -53,6 +53,9 @@ export const api = {
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   matchTags: (payload: TagMatchRequest) => request<TagMatchResponse>('/tags/match', { method: 'POST', body: JSON.stringify(payload) }),
+  apiKeys: () => request<{ data: APIKey[] }>('/api-keys'),
+  createAPIKey: (name: string) => request<CreateAPIKeyResponse>('/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
+  revokeAPIKey: (id: string) => request<{ status: string }>(`/api-keys/${id}`, { method: 'DELETE' }),
   changePassword: (payload: { oldPassword: string; newPassword: string }) => request<{ status: string }>('/auth/change-password', { method: 'POST', body: JSON.stringify(payload) }),
 }
 

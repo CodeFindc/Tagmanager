@@ -156,3 +156,18 @@ type TagMatchResponse struct {
 	HitCount  int                  `json:"hitCount"`
 	MissCount int                  `json:"missCount"`
 }
+
+type APIKey struct {
+	ID         string     `json:"id"`
+	UserID     string     `json:"userId"`
+	Name       string     `json:"name"`
+	KeyPrefix  string     `json:"keyPrefix"`
+	Status     string     `json:"status"`
+	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	CreatedAt  time.Time  `json:"createdAt"`
+}
+
+type CreateAPIKeyResponse struct {
+	APIKey APIKey `json:"apiKey"`
+	RawKey string `json:"rawKey"`
+}
