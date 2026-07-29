@@ -251,8 +251,8 @@ func TestOpenAICompatibleClient_Consolidate_WithExistingTags(t *testing.T) {
 
 	output, err := client.Consolidate(context.Background(), ConsolidationRequest{
 		NamespaceName: "交通",
-		ExistingTags: []ExistingTag{
-			{CanonicalName: "交通事故与交通违法", Aliases: []string{"交通违法"}},
+		ExistingTags: []string{
+			"交通事故与交通违法",
 		},
 		Entries: []InputEntry{
 			{ID: "c1", Name: "自行车与机动车碰撞", Occurrences: 1},

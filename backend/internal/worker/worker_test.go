@@ -91,3 +91,17 @@ func TestWorkerNewDefaultMaxAttempts(t *testing.T) {
 		t.Errorf("expected custom maxAttempts to be 5, got %d", wCustom.maxAttempts)
 	}
 }
+
+func TestFilterNewAliases(t *testing.T) {
+	existingCanonicalTags := []string{"交通事故与交通违法", "消防安全"}
+	rawAliases := []string{"交通事故与交通违法", "消防安全", "自行车与机动车碰撞", "自行车与机动车碰撞", "  车祸事故  "}
+
+	filtered := filterNewAliases(rawAliases, "交通事故与交通违法", existingCanonicalTags)
+
+	if len(filtered) != 2 {
+		t.Fatalf("expected 2 new aliases, got %d: %v", len(filtered), filtered)
+	}
+	if filtered[0] != "自行车与机动车碰撞" || filtered[1] != "车祸事故" {
+		t.Errorf("unexpected filtered aliases: %v", filtered)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/codefun/tagmanager/backend/internal/domain"
@@ -205,6 +206,7 @@ func (w *Worker) fail(ctx context.Context, jobID, windowID string, cause error) 
 }
 
 func (w *Worker) persistProposal(ctx context.Context, jobID, namespaceID, windowID string, output domain.ConsolidationOutput) error {
+	existingTags, _ := fetchExistingTags(ctx, w.pool, namespaceID)
 	tx, err := w.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -215,7 +217,8 @@ func (w *Worker) persistProposal(ctx context.Context, jobID, namespaceID, window
 		return err
 	}
 	for _, tag := range output.Tags {
-		aliases, _ := json.Marshal(tag.Aliases)
+		cleanAliases := filterNewAliases(tag.Aliases, tag.CanonicalName, existingTags)
+		aliases, _ := json.Marshal(cleanAliases)
 		var proposalTagID string
 		if err = tx.QueryRow(ctx, `INSERT INTO proposal_tags(proposal_id,canonical_name,normalized_name,description,aliases,rationale,confidence) VALUES($1,$2,lower($2),$3,$4,$5,$6) RETURNING id`, proposalID, tag.CanonicalName, tag.Description, aliases, tag.Rationale, tag.Confidence).Scan(&proposalTagID); err != nil {
 			return err
@@ -235,32 +238,47 @@ func (w *Worker) persistProposal(ctx context.Context, jobID, namespaceID, window
 	return tx.Commit(ctx)
 }
 
-func fetchExistingTags(ctx context.Context, pool *pgxpool.Pool, namespaceID string) ([]llm.ExistingTag, error) {
+func fetchExistingTags(ctx context.Context, pool *pgxpool.Pool, namespaceID string) ([]string, error) {
 	if pool == nil {
 		return nil, nil
 	}
-	rows, err := pool.Query(ctx, `
-		SELECT t.canonical_name, COALESCE(json_agg(a.alias_name) FILTER (WHERE a.id IS NOT NULL), '[]')
-		FROM tags t
-		LEFT JOIN tag_aliases a ON a.tag_id = t.id
-		WHERE t.namespace_id = $1 AND t.status = 'published'
-		GROUP BY t.id, t.canonical_name
-		ORDER BY t.canonical_name
-	`, namespaceID)
+	rows, err := pool.Query(ctx, `SELECT canonical_name FROM tags WHERE namespace_id = $1 AND status = 'published' ORDER BY canonical_name`, namespaceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var result []llm.ExistingTag
+	var result []string
 	for rows.Next() {
-		var item llm.ExistingTag
-		var aliasesRaw []byte
-		if err := rows.Scan(&item.CanonicalName, &aliasesRaw); err != nil {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal(aliasesRaw, &item.Aliases)
-		result = append(result, item)
+		result = append(result, name)
 	}
 	return result, rows.Err()
+}
+
+func filterNewAliases(aliases []string, canonicalName string, existingCanonicalTags []string) []string {
+	existingSet := map[string]bool{}
+	existingSet[strings.ToLower(strings.TrimSpace(canonicalName))] = true
+	for _, ext := range existingCanonicalTags {
+		existingSet[strings.ToLower(strings.TrimSpace(ext))] = true
+	}
+
+	var newAliases []string
+	seen := map[string]bool{}
+	for _, alias := range aliases {
+		trimmed := strings.TrimSpace(alias)
+		norm := strings.ToLower(trimmed)
+		if norm == "" || existingSet[norm] || seen[norm] {
+			continue
+		}
+		seen[norm] = true
+		newAliases = append(newAliases, trimmed)
+	}
+	if newAliases == nil {
+		return []string{}
+	}
+	return newAliases
 }

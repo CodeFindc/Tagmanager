@@ -128,7 +128,7 @@ func (c *OpenAICompatibleClient) buildRequestBody(input ConsolidationRequest, st
 			},
 		},
 		"messages": []map[string]string{
-			{"role": "system", "content": "You consolidate raw business tags into a minimal, reviewable taxonomy increment. You are provided with `existingTags` (already published canonical tags and their aliases in this namespace) and `entries` (unresolved raw candidate tags). Prefer mapping candidate entries to existing published tags as aliases, or reusing an existing canonicalName, rather than creating redundant new canonical tags whenever an existing tag matches the semantic intent. Never invent coverage IDs. Return only JSON matching the schema."},
+			{"role": "system", "content": "You consolidate raw business tags into a minimal, reviewable taxonomy increment. You are provided with `existingTags` (already published canonical tag names in this namespace) and `entries` (unresolved raw candidate tags). Prefer mapping candidate entries to existing published tags as new aliases, or reusing an existing canonicalName, rather than creating redundant new canonical tags whenever an existing tag matches the semantic intent. In `aliases`, include ONLY newly proposed alias names for this batch—do NOT include existing canonical tag names or previously published aliases. Never invent coverage IDs. Return only JSON matching the schema."},
 			{"role": "user", "content": string(prompt)},
 		},
 	}

@@ -1232,7 +1232,7 @@ function ProposalModal({
                         onChange={e => onUpdateItem(tag.id, { canonicalName: e.target.value })}
                       />
                     </Field>
-                    <Field label="别名 (逗号分隔)">
+                    <Field label="新增别名 (逗号分隔)">
                       <input
                         disabled={!edit.accepted || readonly}
                         className={`${inputClass} py-1.5`}
