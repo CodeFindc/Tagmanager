@@ -303,6 +303,29 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 				return err
 			}
 		}
+		// Bulk resolve any candidate pool entries in this namespace that match published canonical tags or aliases
+		if _, err := tx.Exec(ctx, `
+			UPDATE candidate_pool_entries c
+			SET resolved_at = now()
+			WHERE c.namespace_id = $1 
+			  AND c.resolved_at IS NULL
+			  AND (
+			    EXISTS (
+			        SELECT 1 FROM tags t 
+			        WHERE t.namespace_id = c.namespace_id 
+			          AND t.normalized_name = c.normalized_name 
+			          AND t.status = 'published'
+			    )
+			    OR
+			    EXISTS (
+			        SELECT 1 FROM tag_aliases a 
+			        WHERE a.namespace_id = c.namespace_id 
+			          AND a.normalized_name = c.normalized_name
+			    )
+			  )
+		`, namespaceID); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `UPDATE consolidation_proposals SET status='approved',reviewer_feedback=$2,reviewed_at=now(),version=version+1 WHERE id=$1`, proposalID, decision.Comments); err != nil {
 			return err
 		}
