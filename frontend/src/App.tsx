@@ -1343,29 +1343,35 @@ function ProposalModal({
     setAiLogs(prev => [...prev, { time, type, text }])
   }
 
+  const [aiStreamText, setAiStreamText] = useState('')
+
   const handleAIEvaluate = async () => {
     setAiError('')
     setAiEvaluating(true)
+    setAiResult(null)
+    setAiStreamText('')
     setAiLogs([])
     appendLog('info', `🚀 开始发起 AI 智能助审评估 (提案 ID: ${proposal.id.slice(0, 8)})`)
     appendLog('info', `📥 汇聚提案中 ${tags.length} 项规范标签及其受支撑涵盖候选词快照...`)
 
     try {
-      appendLog('info', `⚡ 建立 SSE 长通道 (text/event-stream) 实时接收流式推理 Chunk...`)
-      if (aiPrompt.trim()) {
-        appendLog('info', `📝 使用微调 Prompt 规则 (${aiPrompt.length} 字符)`)
-      } else {
-        appendLog('info', `⚙️ 使用系统默认助审 Prompt 规则`)
-      }
+      appendLog('info', `⚡ 建立 SSE 长通道 (text/event-stream) 实时接收流式推理...`)
 
-      let chunkCount = 0
+      let firstChunk = true
       const res = await api.evaluateProposalAIStream(
         proposal.id,
         { config: { prompt: aiPrompt } },
-        _chunk => {
-          chunkCount++
-          if (chunkCount === 1) {
-            appendLog('info', `✨ 接收到首个 SSE 响应 Chunk 数据包，大模型实时推导中...`)
+        (chunk, type) => {
+          if (type === 'init') {
+            appendLog('info', `🟢 SSE 长连接瞬间建立成功 (<1ms)，已保活`)
+          } else if (type === 'ping') {
+            appendLog('info', `💓 接收 5s 代理保活 Ping，已维持 Nginx 通道活跃`)
+          } else if (type === 'chunk' && chunk) {
+            setAiStreamText(prev => prev + chunk)
+            if (firstChunk) {
+              firstChunk = false
+              appendLog('info', `✨ 接收到大模型首个 Token，开始实时推导...`)
+            }
           }
         }
       )
@@ -1520,6 +1526,32 @@ function ProposalModal({
             >
               查看诊断日志 ➔
             </button>
+          </div>
+        )}
+
+        {aiEvaluating && (
+          <div className="rounded-xl border border-purple-300 bg-purple-950 p-4 text-xs font-mono text-purple-200 space-y-2.5 shadow-lg">
+            <div className="flex items-center justify-between font-bold text-purple-300">
+              <span className="flex items-center gap-2">
+                <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-400 animate-ping"></span>
+                🤖 AI 大模型流式推导诊断中…
+              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-purple-400 font-normal">{aiStreamText.length} 字符已生成</span>
+                <button
+                  type="button"
+                  onClick={() => setShowAILogModal(true)}
+                  className="rounded border border-purple-800 bg-purple-900/60 px-2 py-0.5 text-[11px] font-normal text-purple-300 hover:bg-purple-800"
+                >
+                  查看完整排查日志
+                </button>
+              </div>
+            </div>
+
+            <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-all leading-relaxed text-purple-100 bg-slate-950 p-3 rounded-lg border border-purple-900/50">
+              {aiStreamText || '🚀 已建立 SSE 保活长连接，等待大模型返回首个 Token...'}
+              <span className="inline-block w-1.5 h-3 bg-purple-400 ml-0.5 animate-pulse"></span>
+            </div>
           </div>
         )}
 

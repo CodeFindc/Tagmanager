@@ -71,7 +71,7 @@ export const api = {
   evaluateProposalAIStream: async (
     proposalId: string,
     payload: { config?: AIAuditConfig },
-    onChunk?: (chunk: string) => void
+    onChunk?: (chunk: string, type: 'init' | 'ping' | 'chunk') => void
   ): Promise<AIAuditEvaluateResponse> => {
     const token = localStorage.getItem('tagmanager-token')
     const res = await fetch(`${baseURL}/review/proposals/${proposalId}/ai-evaluate`, {
@@ -108,8 +108,12 @@ export const api = {
           const raw = trimmed.slice(5).trim()
           try {
             const parsed = JSON.parse(raw)
-            if (parsed.type === 'chunk' && parsed.content) {
-              if (onChunk) onChunk(parsed.content)
+            if (parsed.type === 'init') {
+              if (onChunk) onChunk('', 'init')
+            } else if (parsed.type === 'ping') {
+              if (onChunk) onChunk('', 'ping')
+            } else if (parsed.type === 'chunk' && parsed.content) {
+              if (onChunk) onChunk(parsed.content, 'chunk')
             } else if (parsed.type === 'done' && parsed.result) {
               finalResult = parsed.result
             } else if (parsed.type === 'error' && parsed.error) {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/codefun/tagmanager/backend/internal/config"
 	"github.com/codefun/tagmanager/backend/internal/domain"
@@ -528,11 +529,37 @@ func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
 
+		// 1. Send initial handshake IMMEDIATELY so Nginx gets 200 OK + first bytes in < 1ms
+		initEvt, _ := json.Marshal(map[string]string{"type": "init", "message": "SSE connection established"})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", initEvt)
+		flusher.Flush()
+
+		// 2. Start a 5s heartbeat ticker so Nginx proxy_read_timeout NEVER triggers while LLM is thinking
+		heartbeatDone := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					pingEvt, _ := json.Marshal(map[string]string{"type": "ping"})
+					_, _ = fmt.Fprintf(w, "data: %s\n\n", pingEvt)
+					flusher.Flush()
+				case <-heartbeatDone:
+					return
+				case <-r.Context().Done():
+					return
+				}
+			}
+		}()
+
 		res, err := a.llmClient.EvaluateProposalStream(r.Context(), mergedConfig, proposal, candidateEntries, func(chunk string) {
 			evt, _ := json.Marshal(map[string]string{"type": "chunk", "content": chunk})
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", evt)
 			flusher.Flush()
 		})
+		close(heartbeatDone)
+
 		if err != nil {
 			evt, _ := json.Marshal(map[string]string{"type": "error", "error": err.Error()})
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", evt)
