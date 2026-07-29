@@ -521,6 +521,31 @@ func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {
 		mergedConfig.Prompt = dbSetting.SystemPrompt
 	}
 
+	flusher, isFlushing := w.(http.Flusher)
+	if isFlushing {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		res, err := a.llmClient.EvaluateProposalStream(r.Context(), mergedConfig, proposal, candidateEntries, func(chunk string) {
+			evt, _ := json.Marshal(map[string]string{"type": "chunk", "content": chunk})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", evt)
+			flusher.Flush()
+		})
+		if err != nil {
+			evt, _ := json.Marshal(map[string]string{"type": "error", "error": err.Error()})
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", evt)
+			flusher.Flush()
+			return
+		}
+
+		doneEvt, _ := json.Marshal(map[string]any{"type": "done", "result": res})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", doneEvt)
+		flusher.Flush()
+		return
+	}
+
 	res, err := a.llmClient.EvaluateProposal(r.Context(), mergedConfig, proposal, candidateEntries)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())

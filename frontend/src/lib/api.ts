@@ -68,6 +68,62 @@ export const api = {
   },
   decideProposal: (proposalId: string, payload: { approve: boolean; action?: 'approve' | 'reject' | 'discard'; version: number; comments: string; tags: Array<{ proposalTagId: string; accepted: boolean; canonicalName: string; description: string; aliases: string[] }> }) => request<{ status: string }>(`/review/proposals/${proposalId}/decision`, { method: 'POST', body: JSON.stringify(payload) }),
   evaluateProposalAI: (proposalId: string, payload: { config?: AIAuditConfig }) => request<AIAuditEvaluateResponse>(`/review/proposals/${proposalId}/ai-evaluate`, { method: 'POST', body: JSON.stringify(payload) }),
+  evaluateProposalAIStream: async (
+    proposalId: string,
+    payload: { config?: AIAuditConfig },
+    onChunk?: (chunk: string) => void
+  ): Promise<AIAuditEvaluateResponse> => {
+    const token = localStorage.getItem('tagmanager-token')
+    const res = await fetch(`${baseURL}/review/proposals/${proposalId}/ai-evaluate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    })
+
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => '')
+      throw new APIError(text || `HTTP 状态 ${res.status}`, res.status)
+    }
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResult: AIAuditEvaluateResponse | null = null
+    let streamErr: string | null = null
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('data:')) {
+          const raw = trimmed.slice(5).trim()
+          try {
+            const parsed = JSON.parse(raw)
+            if (parsed.type === 'chunk' && parsed.content) {
+              if (onChunk) onChunk(parsed.content)
+            } else if (parsed.type === 'done' && parsed.result) {
+              finalResult = parsed.result
+            } else if (parsed.type === 'error' && parsed.error) {
+              streamErr = parsed.error
+            }
+          } catch {}
+        }
+      }
+    }
+
+    if (streamErr) throw new Error(streamErr)
+    if (!finalResult) throw new Error('流式读取中断，未获得有效评估 JSON 结果')
+    return finalResult
+  },
   users: () => request<{ data: User[] }>('/users'),
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),

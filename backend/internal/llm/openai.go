@@ -499,6 +499,174 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 	return result, nil
 }
 
+func (c *OpenAICompatibleClient) EvaluateProposalStream(ctx context.Context, cfg domain.AIAuditConfig, proposal domain.Proposal, candidateEntries []string, onChunk func(string)) (domain.AIAuditEvaluateResponse, error) {
+	baseURL := strings.TrimRight(cfg.BaseURL, "/")
+	if baseURL == "" {
+		baseURL = c.baseURL
+	}
+	apiKey := cfg.APIKey
+	if apiKey == "" {
+		apiKey = c.apiKey
+	}
+	model := cfg.Model
+	if model == "" {
+		model = c.model
+	}
+
+	if baseURL == "" || apiKey == "" || model == "" {
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型未配置（缺少 BaseURL、APIKey 或 Model）")
+	}
+
+	sysPrompt := cfg.Prompt
+	if strings.TrimSpace(sysPrompt) == "" {
+		sysPrompt = "你是一名严谨的企业级标签体系审核专家。你的任务是评估大模型自动总结产生的【待审核标签提案】。你需要针对提案中的每一个拟发布规范标签及其别名、受支撑涵盖候选词进行质量诊断与冲突排查，给出现场审核改进建议。请严格按照 JSON Schema 格式返回 JSON 结果。"
+	}
+
+	type tagSummary struct {
+		CanonicalName       string   `json:"canonicalName"`
+		Description         string   `json:"description"`
+		Aliases             []string `json:"aliases"`
+		Confidence          float64  `json:"confidence"`
+		IsExistingCanonical bool     `json:"isExistingCanonical"`
+		CoveredEntryCount   int      `json:"coveredEntryCount"`
+	}
+
+	tags := []tagSummary{}
+	for _, t := range proposal.Tags {
+		tags = append(tags, tagSummary{
+			CanonicalName:       t.CanonicalName,
+			Description:         t.Description,
+			Aliases:             t.Aliases,
+			Confidence:          t.Confidence,
+			IsExistingCanonical: t.IsExistingCanonical,
+			CoveredEntryCount:   len(t.CoveredEntryIDs),
+		})
+	}
+
+	samples := candidateEntries
+	if len(samples) > 30 {
+		samples = samples[:30]
+	}
+
+	userPayload, _ := json.Marshal(map[string]any{
+		"proposedTags":     tags,
+		"candidateSamples": samples,
+	})
+
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"overallSummary": map[string]any{"type": "string", "description": "总体审核评估诊断与改进建议总结（100字以内）"},
+			"tagAdvice": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"canonicalName":  map[string]any{"type": "string"},
+						"recommendation": map[string]any{"type": "string", "enum": []string{"accept", "edit", "reject"}, "description": "处理建议：accept（建议采纳）、edit（建议调整）、reject（建议忽略）"},
+						"reason":         map[string]any{"type": "string", "description": "做出该评估的具体理由（30字以内）"},
+						"suggestedName":  map[string]any{"type": "string", "description": "可选：当建议修改时，推荐的更优规范名"},
+					},
+					"required": []string{"canonicalName", "recommendation", "reason"},
+				},
+			},
+		},
+		"required": []string{"overallSummary", "tagAdvice"},
+	}
+
+	reqBodyMap := map[string]any{
+		"model":       model,
+		"stream":      true,
+		"temperature": 0.2,
+		"max_tokens":  2048,
+		"messages": []map[string]string{
+			{"role": "system", "content": sysPrompt},
+			{"role": "user", "content": string(userPayload)},
+		},
+		"response_format": map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   "ai_audit_response",
+				"strict": true,
+				"schema": schema,
+			},
+		},
+	}
+
+	reqBodyBytes, err := json.Marshal(reqBodyMap)
+	if err != nil {
+		return domain.AIAuditEvaluateResponse{}, err
+	}
+
+	url := baseURL + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBodyBytes))
+	if err != nil {
+		return domain.AIAuditEvaluateResponse{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	timeout := 300 * time.Second
+	if cfg.TimeoutSeconds > 0 {
+		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "Client.Timeout") {
+			return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型响应超时 (超过 %d 秒未返回)。建议更换更快的模型或检查大模型服务状态", int(timeout.Seconds()))
+		}
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审 Endpoint (%s) 失败: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.EvaluateProposal(ctx, cfg, proposal, candidateEntries)
+	}
+
+	var fullContent strings.Builder
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		line := scanner.Text()
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var streamResp struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &streamResp); err == nil && len(streamResp.Choices) > 0 {
+			content := streamResp.Choices[0].Delta.Content
+			if content != "" {
+				fullContent.WriteString(content)
+				if onChunk != nil {
+					onChunk(content)
+				}
+			}
+		}
+	}
+
+	if fullContent.Len() == 0 {
+		return c.EvaluateProposal(ctx, cfg, proposal, candidateEntries)
+	}
+
+	var result domain.AIAuditEvaluateResponse
+	rawContent := strings.TrimSpace(fullContent.String())
+	if err := json.Unmarshal([]byte(rawContent), &result); err != nil {
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("解析流式 AI 助审响应 JSON 失败: %w", err)
+	}
+
+	return result, nil
+}
+
 func (c *OpenAICompatibleClient) FetchModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	apiKey = strings.TrimSpace(apiKey)

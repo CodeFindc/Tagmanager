@@ -1351,14 +1351,24 @@ function ProposalModal({
     appendLog('info', `📥 汇聚提案中 ${tags.length} 项规范标签及其受支撑涵盖候选词快照...`)
 
     try {
-      appendLog('info', `📡 发送请求至后端 /api/v1/review/proposals/${proposal.id.slice(0, 8)}/ai-evaluate`)
+      appendLog('info', `⚡ 建立 SSE 长通道 (text/event-stream) 实时接收流式推理 Chunk...`)
       if (aiPrompt.trim()) {
         appendLog('info', `📝 使用微调 Prompt 规则 (${aiPrompt.length} 字符)`)
       } else {
         appendLog('info', `⚙️ 使用系统默认助审 Prompt 规则`)
       }
 
-      const res = await api.evaluateProposalAI(proposal.id, { config: { prompt: aiPrompt } })
+      let chunkCount = 0
+      const res = await api.evaluateProposalAIStream(
+        proposal.id,
+        { config: { prompt: aiPrompt } },
+        _chunk => {
+          chunkCount++
+          if (chunkCount === 1) {
+            appendLog('info', `✨ 接收到首个 SSE 响应 Chunk 数据包，大模型实时推导中...`)
+          }
+        }
+      )
       setAiResult(res)
       appendLog('success', `✅ AI 助审评估成功！获得 ${res.tagAdvice?.length || 0} 项诊断建议。`)
       appendLog('info', `💡 诊断总结: ${res.overallSummary}`)
