@@ -23,12 +23,30 @@ function createIdempotencyKey(): string {
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = localStorage.getItem('tagmanager-token')
-  const response = await fetch(`${baseURL}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
-  })
-  const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new APIError(payload.error?.message ?? '请求失败', response.status)
+  let response: Response
+  try {
+    response = await fetch(`${baseURL}${path}`, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers },
+    })
+  } catch (err) {
+    throw new APIError(err instanceof Error ? `网络请求失败: ${err.message}` : '网络请求失败', 0)
+  }
+
+  let payload: any = {}
+  const rawText = await response.text().catch(() => '')
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText)
+    } catch {
+      payload = { error: { message: rawText.length > 200 ? rawText.slice(0, 200) + '...' : rawText } }
+    }
+  }
+
+  if (!response.ok) {
+    const msg = payload.error?.message || (response.status === 504 ? '网关响应超时 (504 Gateway Timeout)' : `HTTP 状态 ${response.status}`)
+    throw new APIError(msg, response.status)
+  }
   return payload as T
 }
 

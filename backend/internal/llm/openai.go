@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -448,16 +449,20 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 60 * time.Second}
+	timeout := 300 * time.Second
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审服务失败: %w", err)
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "Client.Timeout") {
+			return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型响应超时 (超过 %d 秒未返回)。建议更换更快的模型或检查大模型服务状态", int(timeout.Seconds()))
+		}
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审 Endpoint (%s) 失败: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBytes, _ := io.ReadAll(resp.Body)
-		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审服务返回错误状态码 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审 Endpoint 返回错误状态码 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
 	}
 
 	var chatResp struct {
