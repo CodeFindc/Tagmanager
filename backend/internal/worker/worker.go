@@ -172,6 +172,9 @@ func validateOutput(output domain.ConsolidationOutput, entries []llm.InputEntry)
 		if tag.CanonicalName == "" {
 			return fmt.Errorf("empty canonical name")
 		}
+		if len(tag.CoveredIDs) == 0 {
+			return fmt.Errorf("tag %q has empty coveredIds", tag.CanonicalName)
+		}
 		for _, id := range tag.CoveredIDs {
 			if !known[id] {
 				return fmt.Errorf("unknown candidate entry %s", id)

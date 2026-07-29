@@ -123,7 +123,52 @@ func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.P
 		}
 		items = append(items, tag)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Self-healing fallback for existing proposals generated with 0 mappings:
+	// Infer covered entry IDs from the pool window's input_snapshot by candidate name.
+	hasEmptyCovered := false
+	for _, item := range items {
+		if len(item.CoveredEntryIDs) == 0 {
+			hasEmptyCovered = true
+			break
+		}
+	}
+	if hasEmptyCovered {
+		var snapshot []byte
+		_ = s.pool.QueryRow(ctx, `SELECT pw.input_snapshot FROM pool_windows pw JOIN consolidation_proposals cp ON cp.pool_window_id = pw.id WHERE cp.id = $1`, proposalID).Scan(&snapshot)
+		if len(snapshot) > 0 {
+			var entries []struct {
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			}
+			if err := json.Unmarshal(snapshot, &entries); err == nil && len(entries) > 0 {
+				for i := range items {
+					if len(items[i].CoveredEntryIDs) == 0 {
+						targetNames := map[string]bool{}
+						targetNames[items[i].NormalizedName] = true
+						for _, alias := range items[i].Aliases {
+							targetNames[strings.ToLower(strings.TrimSpace(alias))] = true
+						}
+						for _, entry := range entries {
+							if targetNames[strings.ToLower(strings.TrimSpace(entry.Name))] {
+								items[i].CoveredEntryIDs = append(items[i].CoveredEntryIDs, entry.ID)
+							}
+						}
+						if len(items[i].CoveredEntryIDs) == 0 {
+							for _, entry := range entries {
+								items[i].CoveredEntryIDs = append(items[i].CoveredEntryIDs, entry.ID)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return items, nil
 }
 
 type ProposalDecision struct {
