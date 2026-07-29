@@ -62,14 +62,30 @@ func (s *Store) ListProposals(ctx context.Context, proposalID, statusFilter stri
 
 func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.ProposalTag, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT pt.id, pt.canonical_name, pt.normalized_name, pt.description, pt.aliases, pt.rationale, pt.confidence, pt.accepted,
-		       EXISTS(
-		           SELECT 1 FROM tags t 
-		           JOIN consolidation_proposals cp ON cp.id = pt.proposal_id 
-		           WHERE t.namespace_id = cp.namespace_id 
-		             AND t.normalized_name = pt.normalized_name 
-		             AND t.status = 'published'
-		       ) AS is_existing_canonical
+		SELECT 
+			pt.id, 
+			pt.canonical_name, 
+			pt.normalized_name, 
+			pt.description, 
+			pt.aliases, 
+			pt.rationale, 
+			pt.confidence, 
+			pt.accepted,
+			EXISTS(
+				SELECT 1 FROM tags t 
+				JOIN consolidation_proposals cp ON cp.id = pt.proposal_id 
+				WHERE t.namespace_id = cp.namespace_id 
+				  AND t.normalized_name = pt.normalized_name 
+				  AND t.status = 'published'
+			) AS is_existing_canonical,
+			COALESCE(
+				(
+					SELECT array_agg(pm.candidate_pool_entry_id::text) 
+					FROM proposal_mappings pm 
+					WHERE pm.proposal_tag_id = pt.id
+				), 
+				ARRAY[]::text[]
+			) AS covered_entry_ids
 		FROM proposal_tags pt
 		WHERE pt.proposal_id = $1
 		ORDER BY pt.canonical_name
@@ -82,26 +98,21 @@ func (s *Store) proposalTags(ctx context.Context, proposalID string) ([]domain.P
 	for rows.Next() {
 		var tag domain.ProposalTag
 		var aliases []byte
-		if err := rows.Scan(&tag.ID, &tag.CanonicalName, &tag.NormalizedName, &tag.Description, &aliases, &tag.Rationale, &tag.Confidence, &tag.Accepted, &tag.IsExistingCanonical); err != nil {
+		if err := rows.Scan(
+			&tag.ID,
+			&tag.CanonicalName,
+			&tag.NormalizedName,
+			&tag.Description,
+			&aliases,
+			&tag.Rationale,
+			&tag.Confidence,
+			&tag.Accepted,
+			&tag.IsExistingCanonical,
+			&tag.CoveredEntryIDs,
+		); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(aliases, &tag.Aliases); err != nil {
-			return nil, err
-		}
-		mappingRows, err := s.pool.Query(ctx, `SELECT candidate_pool_entry_id FROM proposal_mappings WHERE proposal_tag_id=$1`, tag.ID)
-		if err != nil {
-			return nil, err
-		}
-		for mappingRows.Next() {
-			var id string
-			if err := mappingRows.Scan(&id); err != nil {
-				mappingRows.Close()
-				return nil, err
-			}
-			tag.CoveredEntryIDs = append(tag.CoveredEntryIDs, id)
-		}
-		if err := mappingRows.Err(); err != nil {
-			mappingRows.Close()
 			return nil, err
 		}
 		if tag.Aliases == nil {
