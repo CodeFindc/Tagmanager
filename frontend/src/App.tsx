@@ -1330,14 +1330,43 @@ function ProposalModal({
     return localStorage.getItem('tagmanager_ai_audit_prompt') || ''
   })
 
+  interface AILogEntry {
+    time: string
+    type: 'info' | 'success' | 'error'
+    text: string
+  }
+  const [aiLogs, setAiLogs] = useState<AILogEntry[]>([])
+  const [showAILogModal, setShowAILogModal] = useState(false)
+
+  const appendLog = (type: 'info' | 'success' | 'error', text: string) => {
+    const time = new Date().toLocaleTimeString()
+    setAiLogs(prev => [...prev, { time, type, text }])
+  }
+
   const handleAIEvaluate = async () => {
     setAiError('')
     setAiEvaluating(true)
+    setAiLogs([])
+    appendLog('info', `🚀 开始发起 AI 智能助审评估 (提案 ID: ${proposal.id.slice(0, 8)})`)
+    appendLog('info', `📥 汇聚提案中 ${tags.length} 项规范标签及其受支撑涵盖候选词快照...`)
+
     try {
+      appendLog('info', `📡 发送请求至后端 /api/v1/review/proposals/${proposal.id.slice(0, 8)}/ai-evaluate`)
+      if (aiPrompt.trim()) {
+        appendLog('info', `📝 使用微调 Prompt 规则 (${aiPrompt.length} 字符)`)
+      } else {
+        appendLog('info', `⚙️ 使用系统默认助审 Prompt 规则`)
+      }
+
       const res = await api.evaluateProposalAI(proposal.id, { config: { prompt: aiPrompt } })
       setAiResult(res)
+      appendLog('success', `✅ AI 助审评估成功！获得 ${res.tagAdvice?.length || 0} 项诊断建议。`)
+      appendLog('info', `💡 诊断总结: ${res.overallSummary}`)
     } catch (err) {
-      setAiError(err instanceof Error ? err.message : 'AI 助审评估请求失败')
+      const msg = err instanceof Error ? err.message : 'AI 助审评估请求失败'
+      setAiError(msg)
+      appendLog('error', `❌ 评估请求失败: ${msg}`)
+      setShowAILogModal(true)
     } finally {
       setAiEvaluating(false)
     }
@@ -1435,6 +1464,13 @@ function ProposalModal({
               </button>
               <button
                 type="button"
+                onClick={() => batchSetAccepted(visibleTags, false)}
+                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50"
+              >
+                忽略当前筛选 ({visibleTags.length})
+              </button>
+              <button
+                type="button"
                 onClick={handleAIEvaluate}
                 disabled={aiEvaluating}
                 className="rounded-lg border border-purple-300 bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 flex items-center gap-1"
@@ -1449,12 +1485,33 @@ function ProposalModal({
               >
                 📜 助审提示词
               </button>
+              {aiLogs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowAILogModal(true)}
+                  className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 flex items-center gap-1"
+                  title="查看 AI 助审执行过程与诊断日志"
+                >
+                  📋 助审日志 ({aiLogs.length})
+                </button>
+              )}
             </div>
           )}
         </div>
 
         {error && <Notice message={error} />}
-        {aiError && <Notice message={aiError} />}
+        {aiError && (
+          <div className="flex items-center justify-between rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900">
+            <span>{aiError}</span>
+            <button
+              type="button"
+              onClick={() => setShowAILogModal(true)}
+              className="font-semibold text-rose-700 hover:underline shrink-0"
+            >
+              查看诊断日志 ➔
+            </button>
+          </div>
+        )}
 
         {aiResult && (
           <div className="rounded-xl border border-purple-200 bg-purple-50/80 p-4 space-y-2 text-xs text-purple-950">
@@ -1465,15 +1522,24 @@ function ProposalModal({
                   {aiResult.tagAdvice.length} 项诊断建议
                 </span>
               </div>
-              {!readonly && (
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={handleApplyAISuggestions}
-                  className="rounded-lg bg-purple-700 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-800 shadow-sm"
+                  onClick={() => setShowAILogModal(true)}
+                  className="rounded border border-purple-300 bg-white px-2.5 py-1 text-xs font-medium text-purple-800 hover:bg-purple-100"
                 >
-                  一键应用 AI 智能选牌
+                  📋 查看助审日志
                 </button>
-              )}
+                {!readonly && (
+                  <button
+                    type="button"
+                    onClick={handleApplyAISuggestions}
+                    className="rounded bg-purple-700 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-800 shadow-sm"
+                  >
+                    一键应用 AI 智能选牌
+                  </button>
+                )}
+              </div>
             </div>
             <p className="leading-relaxed text-purple-900 font-medium">{aiResult.overallSummary}</p>
           </div>
@@ -1733,6 +1799,55 @@ function ProposalModal({
           onSave={setAiPrompt}
           onClose={() => setShowAIPromptModal(false)}
         />
+      )}
+
+      {showAILogModal && (
+        <Modal title="📋 AI 助审执行诊断终端" onClose={() => setShowAILogModal(false)}>
+          <div className="space-y-3 px-1 py-2 text-xs">
+            <div className="flex items-center justify-between text-slate-500">
+              <span>共记录 {aiLogs.length} 条执行步骤日志</span>
+              <button
+                type="button"
+                onClick={() => setAiLogs([])}
+                className="text-xs text-slate-400 hover:text-slate-600"
+              >
+                清空日志
+              </button>
+            </div>
+
+            <div className="max-h-80 overflow-y-auto rounded-xl border border-slate-900 bg-slate-950 p-4 font-mono text-[12px] text-slate-200 leading-relaxed space-y-1.5 shadow-inner">
+              {aiLogs.length === 0 ? (
+                <div className="text-slate-500 text-center py-4">暂无评估日志</div>
+              ) : (
+                aiLogs.map((log, idx) => (
+                  <div
+                    key={idx}
+                    className={`flex items-start gap-2 ${
+                      log.type === 'error'
+                        ? 'text-rose-400 font-semibold'
+                        : log.type === 'success'
+                        ? 'text-emerald-400 font-semibold'
+                        : 'text-slate-300'
+                    }`}
+                  >
+                    <span className="shrink-0 text-slate-500 text-[11px] font-normal">[{log.time}]</span>
+                    <span className="whitespace-pre-wrap break-all">{log.text}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAILogModal(false)}
+                className={btnSecondary}
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </Modal>
       )}
     </Modal>
   )
