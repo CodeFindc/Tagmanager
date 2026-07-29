@@ -507,10 +507,15 @@ func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {
 	_ = a.store.GetSystemSetting(r.Context(), "audit_llm_config", &dbSetting)
 
 	mergedConfig := domain.AIAuditConfig{
-		BaseURL: activeLLM.BaseURL,
-		APIKey:  activeLLM.APIKey,
-		Model:   activeLLM.Model,
-		Prompt:  body.Config.Prompt,
+		BaseURL:        activeLLM.BaseURL,
+		APIKey:         activeLLM.APIKey,
+		Model:          activeLLM.Model,
+		TimeoutSeconds: dbSetting.TimeoutSeconds,
+		MaxRetries:     dbSetting.MaxRetries,
+		Prompt:         body.Config.Prompt,
+	}
+	if mergedConfig.TimeoutSeconds == 0 {
+		mergedConfig.TimeoutSeconds = int(activeLLM.Timeout.Seconds())
 	}
 	if mergedConfig.Prompt == "" {
 		mergedConfig.Prompt = dbSetting.SystemPrompt

@@ -450,6 +450,9 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	timeout := 300 * time.Second
+	if cfg.TimeoutSeconds > 0 {
+		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
+	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {

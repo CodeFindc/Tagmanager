@@ -173,10 +173,12 @@ type CreateAPIKeyResponse struct {
 }
 
 type AIAuditConfig struct {
-	BaseURL string `json:"baseUrl,omitempty"`
-	APIKey  string `json:"apiKey,omitempty"`
-	Model   string `json:"model,omitempty"`
-	Prompt  string `json:"prompt,omitempty"`
+	BaseURL        string `json:"baseUrl,omitempty"`
+	APIKey         string `json:"apiKey,omitempty"`
+	Model          string `json:"model,omitempty"`
+	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
+	MaxRetries     int    `json:"maxRetries,omitempty"`
+	Prompt         string `json:"prompt,omitempty"`
 }
 
 type AIAuditEvaluateRequest struct {

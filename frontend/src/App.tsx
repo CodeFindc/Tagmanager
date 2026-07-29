@@ -2536,7 +2536,7 @@ function SettingsPage() {
               </div>
             </Field>
 
-            <Field label="Model Name (模型名称)" className="sm:col-span-2">
+            <Field label="Model Name (模型名称)">
               <div className="space-y-2">
                 <div className="flex items-center gap-2">
                   <input
@@ -2571,6 +2571,29 @@ function SettingsPage() {
                 )}
               </div>
             </Field>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="超时时间 (秒)">
+                <input
+                  type="number"
+                  min="10"
+                  max="600"
+                  className={inputClass}
+                  value={auditLlm.timeoutSeconds ?? 300}
+                  onChange={e => setAuditLlm({ ...auditLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                />
+              </Field>
+              <Field label="最大重试次数">
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  className={inputClass}
+                  value={auditLlm.maxRetries ?? 3}
+                  onChange={e => setAuditLlm({ ...auditLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
+                />
+              </Field>
+            </div>
 
             <Field label="助审系统 Prompt" className="sm:col-span-2">
               <textarea
