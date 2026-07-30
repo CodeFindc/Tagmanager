@@ -140,14 +140,14 @@ export function App() {
                   to={item.to}
                   end={item.to === '/'}
                   className={({ isActive }) =>
-                    `flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
+                    `group relative flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm transition-all duration-150 select-none ${
                       isActive
-                        ? 'bg-brand text-white shadow-sm shadow-brand/30 font-semibold'
-                        : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-100'
+                        ? 'bg-brand text-white shadow-md shadow-brand/25 font-bold tracking-wide ring-1 ring-brand/40'
+                        : 'font-medium text-slate-600 hover:bg-slate-100/90 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/70 dark:hover:text-slate-100'
                     }`
                   }
                 >
-                  <span className="text-base">{item.icon}</span>
+                  <span className="text-base transition-transform group-hover:scale-110">{item.icon}</span>
                   <span>{item.label}</span>
                 </NavLink>
               ))}
@@ -372,46 +372,46 @@ function NamespacesPage() {
       {error && <Notice message={error} />}
       {success && <SuccessNotice message={success} />}
 
-      <Panel title="创建标签域" description="默认阈值 50；设为较小值（如 5）便于联调。创建后暂不支持在界面修改阈值。">
-        <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-3">
-          <Field label="名称" className="min-w-[160px] flex-1">
+      <Panel title="🌐 创建新标签域" description="默认阈值 50；设为较小值（如 5）便于联调测试。创建后暂不支持在界面修改阈值。">
+        <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-3.5 pt-1">
+          <Field label="标签域名称" className="min-w-[180px] flex-1">
             <input required placeholder="例如：产品能力 / 行业主题" className={inputClass} value={name} onChange={e => setName(e.target.value)} />
           </Field>
-          <Field label="描述（可选）" className="min-w-[200px] flex-[2]">
-            <input placeholder="用途说明" className={inputClass} value={description} onChange={e => setDescription(e.target.value)} />
+          <Field label="功能描述（可选）" className="min-w-[220px] flex-[2]">
+            <input placeholder="用于描述该标签域的应用场景与归并目标" className={inputClass} value={description} onChange={e => setDescription(e.target.value)} />
           </Field>
-          <Field label="候选池阈值" className="w-32">
+          <Field label="自动归并触发阈值" className="w-36">
             <input required type="number" min={1} step={1} className={inputClass} value={candidateThreshold} onChange={e => setCandidateThreshold(Number(e.target.value))} />
           </Field>
           <button type="submit" disabled={submitting} className={btnPrimary}>
-            {submitting ? '创建中…' : '创建标签域'}
+            {submitting ? '创建中…' : '➕ 确认创建标签域'}
           </button>
         </form>
       </Panel>
 
       <TableShell>
         <table className="w-full min-w-[520px] text-left text-sm">
-          <thead className="bg-slate-50 text-slate-500">
+          <thead className="bg-slate-50/90 dark:bg-slate-800/80 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             <tr>
-              <th className="p-3 font-medium">名称</th>
-              <th className="p-3 font-medium">描述</th>
-              <th className="p-3 font-medium">阈值</th>
-              <th className="hidden p-3 font-medium lg:table-cell">ID</th>
+              <th className="py-3.5 px-4 sm:px-5">标签域名称</th>
+              <th className="py-3.5 px-4 sm:px-5">功能描述</th>
+              <th className="py-3.5 px-4 sm:px-5">触发阈值</th>
+              <th className="hidden py-3.5 px-4 sm:px-5 lg:table-cell">系统 ID</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
             {items.length === 0 ? (
-              <tr className="border-t">
-                <td colSpan={4} className="p-6 text-center text-slate-500">暂无标签域，请先创建一个。</td>
+              <tr>
+                <td colSpan={4} className="py-8 text-center text-slate-500 dark:text-slate-400">暂无已创建的标签域，请在上方卡片中先创建一个。</td>
               </tr>
             ) : items.map(ns => (
-              <tr key={ns.id} className="border-t">
-                <td className="p-3 font-medium">{ns.name}</td>
-                <td className="max-w-[240px] truncate p-3 text-slate-600" title={ns.description || undefined}>{ns.description || '—'}</td>
-                <td className="p-3">
-                  <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">{ns.candidateThreshold}</span>
+              <tr key={ns.id} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-800/50">
+                <td className="py-3.5 px-4 sm:px-5 font-bold text-slate-900 dark:text-slate-100">{ns.name}</td>
+                <td className="max-w-[280px] truncate py-3.5 px-4 sm:px-5 text-slate-600 dark:text-slate-300" title={ns.description || undefined}>{ns.description || '—'}</td>
+                <td className="py-3.5 px-4 sm:px-5">
+                  <span className="rounded-md bg-slate-100 px-2.5 py-1 font-mono text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60">{ns.candidateThreshold}</span>
                 </td>
-                <td className="hidden max-w-[140px] truncate p-3 font-mono text-xs text-slate-400 lg:table-cell" title={ns.id}>{ns.id}</td>
+                <td className="hidden max-w-[140px] truncate py-3.5 px-4 sm:px-5 font-mono text-xs text-slate-400 dark:text-slate-500 lg:table-cell" title={ns.id}>{ns.id}</td>
               </tr>
             ))}
           </tbody>
