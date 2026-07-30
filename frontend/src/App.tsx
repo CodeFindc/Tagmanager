@@ -2517,8 +2517,7 @@ function SettingsPage() {
 
   // Collapsible card states (Default collapsed)
   const [openAccountCard, setOpenAccountCard] = useState(false)
-  const [openConsolidationCard, setOpenConsolidationCard] = useState(false)
-  const [openAuditCard, setOpenAuditCard] = useState(false)
+  const [openLlmCard, setOpenLlmCard] = useState(false)
 
   // Account password change form state
   const [oldPassword, setOldPassword] = useState('')
@@ -2840,26 +2839,26 @@ function SettingsPage() {
           )}
         </section>
 
-        {/* Card 2: 标签归并大模型配置 (Consolidation LLM Engine) */}
+        {/* Card 2: 大模型与 AI 助审服务配置 (Consolidated LLM & AI Audit Copilot Card) */}
         <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
-          {/* Card Header */}
+          {/* Parent Card Header */}
           <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
             <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
-                onClick={() => setOpenConsolidationCard(!openConsolidationCard)}
+                onClick={() => setOpenLlmCard(!openLlmCard)}
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                title={openConsolidationCard ? '收起卡片' : '展开卡片'}
+                title={openLlmCard ? '收起卡片' : '展开卡片'}
               >
-                <span className={`text-xs transition-transform duration-200 ${openConsolidationCard ? 'rotate-0' : '-rotate-90'}`}>▼</span>
+                <span className={`text-xs transition-transform duration-200 ${openLlmCard ? 'rotate-0' : '-rotate-90'}`}>▼</span>
               </button>
               <div className="min-w-0">
                 <h2 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-                  1. 标签归并大模型配置
-                  <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand">核心归并引擎</span>
+                  大模型与 AI 助审服务配置
+                  <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand">核心 AI 引擎</span>
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
-                  用于候选词达到触发阀值后的自动聚类、规范名提炼与别名生成
+                  包含【1. 标签归并大模型引擎】与【2. AI 智能助审助手】的 LLM Endpoint、密钥与 Prompt 配置
                 </p>
               </div>
             </div>
@@ -2869,349 +2868,325 @@ function SettingsPage() {
             </div>
           </div>
 
-          {/* Card Body */}
-          {openConsolidationCard && (
-            <div className="p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800/60">
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed min-w-0 flex-1">
-                  核心归并引擎通过 OpenAI 兼容 Chat Completions 接口调用。保存后后端 Worker 进程将无缝在线感知最新数据库配置。
-                </p>
-                <button
-                  type="button"
-                  onClick={() => handleTestConnection('consolidation')}
-                  disabled={testingConsolidation}
-                  className="shrink-0 rounded-full border border-emerald-300 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-colors cursor-pointer"
-                >
-                  {testingConsolidation ? '测试中…' : '⚡ 测试连接'}
-                </button>
-              </div>
-
-              {consolidationTestRes && (
-                <div className={`rounded-xl border p-3.5 text-xs ${consolidationTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
-                  <div className="font-semibold">{consolidationTestRes.success ? '✅ 归并引擎测试连接成功' : '❌ 归并引擎测试连接失败'}</div>
-                  <p className="mt-0.5 leading-relaxed">{consolidationTestRes.message}</p>
-                </div>
-              )}
-
-              {/* 2x2 Grid Form */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
-                {/* Cell 1: Base URL */}
-                <div className="min-w-0 space-y-1">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Base URL (OpenAI 兼容 Endpoint)</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">模型 API 服务根地址，通常包含 /v1</p>
-                  <input
-                    className={settingInputClass}
-                    placeholder="例如：https://api.openai.com/v1 或 https://api.deepseek.com/v1"
-                    value={consolidationLlm.baseUrl}
-                    onChange={e => setConsolidationLlm({ ...consolidationLlm, baseUrl: e.target.value })}
-                  />
-                </div>
-
-                {/* Cell 2: API Key */}
-                <div className="min-w-0 space-y-1">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">API Key 访问凭证</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">仅存存于后端加密节点，绝对不透传至浏览器</p>
-                  <div className="relative">
-                    <input
-                      type={showConsolidationKey ? 'text' : 'password'}
-                      className={`${settingInputClass} pr-10`}
-                      placeholder="sk-..."
-                      value={consolidationLlm.apiKey}
-                      onChange={e => setConsolidationLlm({ ...consolidationLlm, apiKey: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowConsolidationKey(!showConsolidationKey)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-                      title={showConsolidationKey ? '隐藏 API Key' : '显示 API Key'}
-                    >
-                      {showConsolidationKey ? '🙈' : '👁️'}
-                    </button>
+          {/* Parent Card Body (Displays Sub-section 1 & Sub-section 2 when expanded) */}
+          {openLlmCard && (
+            <div className="p-6 space-y-8">
+              {/* Sub-section 1: 1. 标签归并大模型配置 */}
+              <div className="space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800/60">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-bold text-slate-900 dark:text-slate-100">1. 标签归并大模型配置 (Tag Consolidation LLM)</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">归并引擎</span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => handleTestConnection('consolidation')}
+                    disabled={testingConsolidation}
+                    className="shrink-0 rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-colors cursor-pointer"
+                  >
+                    {testingConsolidation ? '测试中…' : '⚡ 测试连接'}
+                  </button>
                 </div>
 
-                {/* Cell 3: Model Name */}
-                <div className="min-w-0 space-y-1 sm:col-span-2 lg:col-span-1">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Model Name (模型名称)</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">手动填写或点击在线获取可用模型名称</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      className={`${settingInputClass} font-mono`}
-                      placeholder="如 gpt-4o-mini 或 deepseek-chat"
-                      value={consolidationLlm.model}
-                      onChange={e => setConsolidationLlm({ ...consolidationLlm, model: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleFetchModels('consolidation')}
-                      disabled={fetchingConsolidationModels}
-                      className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      {fetchingConsolidationModels ? '拉取中…' : '🔄 获取列表'}
-                    </button>
+                {consolidationTestRes && (
+                  <div className={`rounded-xl border p-3.5 text-xs ${consolidationTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
+                    <div className="font-semibold">{consolidationTestRes.success ? '✅ 归并引擎测试连接成功' : '❌ 归并引擎测试连接失败'}</div>
+                    <p className="mt-0.5 leading-relaxed">{consolidationTestRes.message}</p>
                   </div>
-                  {consolidationModels.length > 0 && (
-                    <div className="mt-2 flex items-center gap-2 text-xs">
-                      <span className="text-slate-500 font-medium shrink-0">下拉选择:</span>
-                      <select
+                )}
+
+                {/* 2x2 Grid Form for Consolidation LLM */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+                  {/* Cell 1: Base URL */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Base URL (OpenAI 兼容 Endpoint)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">模型 API 服务根地址，通常包含 /v1</p>
+                    <input
+                      className={settingInputClass}
+                      placeholder="例如：https://api.openai.com/v1 或 https://api.deepseek.com/v1"
+                      value={consolidationLlm.baseUrl}
+                      onChange={e => setConsolidationLlm({ ...consolidationLlm, baseUrl: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Cell 2: API Key */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">API Key 访问凭证</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">仅存于后端加密节点，绝对不透传至浏览器</p>
+                    <div className="relative">
+                      <input
+                        type={showConsolidationKey ? 'text' : 'password'}
+                        className={`${settingInputClass} pr-10`}
+                        placeholder="sk-..."
+                        value={consolidationLlm.apiKey}
+                        onChange={e => setConsolidationLlm({ ...consolidationLlm, apiKey: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConsolidationKey(!showConsolidationKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showConsolidationKey ? '隐藏 API Key' : '显示 API Key'}
+                      >
+                        {showConsolidationKey ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Cell 3: Model Name */}
+                  <div className="min-w-0 space-y-1 sm:col-span-2 lg:col-span-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Model Name (模型名称)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">手动填写或点击在线获取可用模型名称</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        className={`${settingInputClass} font-mono`}
+                        placeholder="如 gpt-4o-mini 或 deepseek-chat"
                         value={consolidationLlm.model}
                         onChange={e => setConsolidationLlm({ ...consolidationLlm, model: e.target.value })}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleFetchModels('consolidation')}
+                        disabled={fetchingConsolidationModels}
+                        className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                       >
-                        <option value="">-- 请选择在线拉取的模型 --</option>
-                        {consolidationModels.map(m => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
+                        {fetchingConsolidationModels ? '拉取中…' : '🔄 获取列表'}
+                      </button>
                     </div>
-                  )}
+                    {consolidationModels.length > 0 && (
+                      <div className="mt-2 flex items-center gap-2 text-xs">
+                        <span className="text-slate-500 font-medium shrink-0">下拉选择:</span>
+                        <select
+                          value={consolidationLlm.model}
+                          onChange={e => setConsolidationLlm({ ...consolidationLlm, model: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none"
+                        >
+                          <option value="">-- 请选择在线拉取的模型 --</option>
+                          {consolidationModels.map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cell 4: 超时与重试 */}
+                  <div className="grid grid-cols-2 gap-3 min-w-0">
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                      <input
+                        type="number"
+                        min="10"
+                        max="600"
+                        className={settingInputClass}
+                        value={consolidationLlm.timeoutSeconds ?? 300}
+                        onChange={e => setConsolidationLlm({ ...consolidationLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">最大重试上限</label>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 1 - 10 次</p>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        className={settingInputClass}
+                        value={consolidationLlm.maxRetries ?? 3}
+                        onChange={e => setConsolidationLlm({ ...consolidationLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Cell 5: System Prompt */}
+                  <div className="min-w-0 space-y-1 sm:col-span-2">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">标签归并 System Prompt (系统提示词)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">定义大模型的归并泛化逻辑与约束规则</p>
+                    <textarea
+                      className={`${settingInputClass} min-h-24 leading-relaxed font-mono text-xs`}
+                      placeholder="请输入归并 System Prompt"
+                      value={consolidationLlm.systemPrompt || ''}
+                      onChange={e => setConsolidationLlm({ ...consolidationLlm, systemPrompt: e.target.value })}
+                    />
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setConsolidationLlm({ ...consolidationLlm, systemPrompt: defaultConsolidationPrompt })}
+                        className="text-xs text-brand hover:underline font-semibold"
+                      >
+                        ↺ 重置为默认归并提示词
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Sub-section Separator */}
+              <div className="border-t border-slate-100 dark:border-slate-800/80 my-2" />
+
+              {/* Sub-section 2: 2. AI 智能助审助手配置 */}
+              <div className="space-y-5">
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800/60">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-bold text-slate-900 dark:text-slate-100">2. AI 智能助审助手配置 (AI Audit Copilot LLM)</span>
+                    <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-semibold text-purple-800 dark:bg-purple-950/80 dark:text-purple-300">助审 Copilot</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleTestConnection('audit')}
+                    disabled={testingAudit}
+                    className="shrink-0 rounded-full border border-purple-300 bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100 transition-colors cursor-pointer"
+                  >
+                    {testingAudit ? '测试中…' : '⚡ 测试连接'}
+                  </button>
                 </div>
 
-                {/* Cell 4: 超时与重试 */}
-                <div className="grid grid-cols-2 gap-3 min-w-0">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                {auditTestRes && (
+                  <div className={`rounded-xl border p-3.5 text-xs ${auditTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
+                    <div className="font-semibold">{auditTestRes.success ? '✅ 助审助手测试连接成功' : '❌ 助审助手测试连接失败'}</div>
+                    <p className="mt-0.5 leading-relaxed">{auditTestRes.message}</p>
+                  </div>
+                )}
+
+                {/* 2x2 Grid Form for Audit Copilot LLM */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+                  {/* Cell 1: Base URL */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Base URL (OpenAI 兼容 Endpoint)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">模型 API 服务根地址，通常包含 /v1</p>
                     <input
-                      type="number"
-                      min="10"
-                      max="600"
                       className={settingInputClass}
-                      value={consolidationLlm.timeoutSeconds ?? 300}
-                      onChange={e => setConsolidationLlm({ ...consolidationLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                      placeholder="例如：https://api.openai.com/v1"
+                      value={auditLlm.baseUrl}
+                      onChange={e => setAuditLlm({ ...auditLlm, baseUrl: e.target.value })}
                     />
                   </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">最大重试上限</label>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 1 - 10 次</p>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      className={settingInputClass}
-                      value={consolidationLlm.maxRetries ?? 3}
-                      onChange={e => setConsolidationLlm({ ...consolidationLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
-                    />
+
+                  {/* Cell 2: API Key */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">API Key 访问凭证</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">仅存于后端加密节点，绝对不透传至浏览器</p>
+                    <div className="relative">
+                      <input
+                        type={showAuditKey ? 'text' : 'password'}
+                        className={`${settingInputClass} pr-10`}
+                        placeholder="sk-..."
+                        value={auditLlm.apiKey}
+                        onChange={e => setAuditLlm({ ...auditLlm, apiKey: e.target.value })}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowAuditKey(!showAuditKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showAuditKey ? '隐藏 API Key' : '显示 API Key'}
+                      >
+                        {showAuditKey ? '🙈' : '👁️'}
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {/* Cell 5: System Prompt */}
-                <div className="min-w-0 space-y-1 sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">标签归并 System Prompt (系统提示词)</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">定义大模型的归并泛化逻辑与约束规则</p>
-                  <textarea
-                    className={`${settingInputClass} min-h-24 leading-relaxed font-mono text-xs`}
-                    placeholder="请输入归并 System Prompt"
-                    value={consolidationLlm.systemPrompt || ''}
-                    onChange={e => setConsolidationLlm({ ...consolidationLlm, systemPrompt: e.target.value })}
-                  />
-                  <div className="flex justify-end pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setConsolidationLlm({ ...consolidationLlm, systemPrompt: defaultConsolidationPrompt })}
-                      className="text-xs text-brand hover:underline font-semibold"
-                    >
-                      ↺ 重置为默认归并提示词
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* Card 3: AI 智能助审助手配置 (Audit Copilot LLM) */}
-        <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
-          {/* Card Header */}
-          <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
-            <div className="flex items-center gap-3 min-w-0">
-              <button
-                type="button"
-                onClick={() => setOpenAuditCard(!openAuditCard)}
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-                title={openAuditCard ? '收起卡片' : '展开卡片'}
-              >
-                <span className={`text-xs transition-transform duration-200 ${openAuditCard ? 'rotate-0' : '-rotate-90'}`}>▼</span>
-              </button>
-              <div className="min-w-0">
-                <h2 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-                  2. AI 智能助审助手配置
-                  <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-semibold text-purple-800 dark:bg-purple-950/80 dark:text-purple-300">审核中心 Copilot</span>
-                </h2>
-                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
-                  用于审核中心提案评估的 SSE 流式长连接实时推理助手
-                </p>
-              </div>
-            </div>
-            {/* Right Circle Icon */}
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-50 text-base text-purple-700 dark:bg-purple-950/80 dark:text-purple-300 shadow-2xs">
-              ⚖️
-            </div>
-          </div>
-
-          {/* Card Body */}
-          {openAuditCard && (
-            <div className="p-6 space-y-5">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800/60">
-                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed min-w-0 flex-1">
-                  助审助手采用 SSE 长连接流式输出，后端已配置 5 秒 Nginx 保活心跳防 504 Gateway Time-out 截断机制。
-                </p>
-                <button
-                  type="button"
-                  onClick={() => handleTestConnection('audit')}
-                  disabled={testingAudit}
-                  className="shrink-0 rounded-full border border-purple-300 bg-purple-50 px-3.5 py-1.5 text-xs font-semibold text-purple-800 hover:bg-purple-100 transition-colors cursor-pointer"
-                >
-                  {testingAudit ? '测试中…' : '⚡ 测试连接'}
-                </button>
-              </div>
-
-              {auditTestRes && (
-                <div className={`rounded-xl border p-3.5 text-xs ${auditTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
-                  <div className="font-semibold">{auditTestRes.success ? '✅ 助审助手测试连接成功' : '❌ 助审助手测试连接失败'}</div>
-                  <p className="mt-0.5 leading-relaxed">{auditTestRes.message}</p>
-                </div>
-              )}
-
-              {/* 2x2 Grid Form */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
-                {/* Cell 1: Base URL */}
-                <div className="min-w-0 space-y-1">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Base URL (OpenAI 兼容 Endpoint)</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">模型 API 服务根地址，通常包含 /v1</p>
-                  <input
-                    className={settingInputClass}
-                    placeholder="例如：https://api.openai.com/v1"
-                    value={auditLlm.baseUrl}
-                    onChange={e => setAuditLlm({ ...auditLlm, baseUrl: e.target.value })}
-                  />
-                </div>
-
-                {/* Cell 2: API Key */}
-                <div className="min-w-0 space-y-1">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">API Key 访问凭证</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">仅存于后端加密节点，绝对不透传至浏览器</p>
-                  <div className="relative">
-                    <input
-                      type={showAuditKey ? 'text' : 'password'}
-                      className={`${settingInputClass} pr-10`}
-                      placeholder="sk-..."
-                      value={auditLlm.apiKey}
-                      onChange={e => setAuditLlm({ ...auditLlm, apiKey: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowAuditKey(!showAuditKey)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
-                      title={showAuditKey ? '隐藏 API Key' : '显示 API Key'}
-                    >
-                      {showAuditKey ? '🙈' : '👁️'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Cell 3: Model Name */}
-                <div className="min-w-0 space-y-1 sm:col-span-2 lg:col-span-1">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Model Name (模型名称)</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">手动填写或点击在线获取可用模型名称</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      className={`${settingInputClass} font-mono`}
-                      placeholder="如 gpt-4o-mini 或 deepseek-chat"
-                      value={auditLlm.model}
-                      onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => handleFetchModels('audit')}
-                      disabled={fetchingAuditModels}
-                      className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                    >
-                      {fetchingAuditModels ? '拉取中…' : '🔄 获取列表'}
-                    </button>
-                  </div>
-                  {auditModels.length > 0 && (
-                    <div className="mt-2 flex items-center gap-2 text-xs">
-                      <span className="text-slate-500 font-medium shrink-0">下拉选择:</span>
-                      <select
+                  {/* Cell 3: Model Name */}
+                  <div className="min-w-0 space-y-1 sm:col-span-2 lg:col-span-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Model Name (模型名称)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">手动填写或点击在线获取可用模型名称</p>
+                    <div className="flex items-center gap-2">
+                      <input
+                        className={`${settingInputClass} font-mono`}
+                        placeholder="如 gpt-4o-mini 或 deepseek-chat"
                         value={auditLlm.model}
                         onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
-                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleFetchModels('audit')}
+                        disabled={fetchingAuditModels}
+                        className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                       >
-                        <option value="">-- 请选择在线拉取的模型 --</option>
-                        {auditModels.map(m => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
+                        {fetchingAuditModels ? '拉取中…' : '🔄 获取列表'}
+                      </button>
                     </div>
-                  )}
-                </div>
+                    {auditModels.length > 0 && (
+                      <div className="mt-2 flex items-center gap-2 text-xs">
+                        <span className="text-slate-500 font-medium shrink-0">下拉选择:</span>
+                        <select
+                          value={auditLlm.model}
+                          onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
+                          className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none"
+                        >
+                          <option value="">-- 请选择在线拉取的模型 --</option>
+                          {auditModels.map(m => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                  </div>
 
-                {/* Cell 4: 超时与重试 */}
-                <div className="grid grid-cols-2 gap-3 min-w-0">
-                  <div className="space-y-1">
-                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
-                    <input
-                      type="number"
-                      min="10"
-                      max="600"
-                      className={settingInputClass}
-                      value={auditLlm.timeoutSeconds ?? 300}
-                      onChange={e => setAuditLlm({ ...auditLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
-                    />
+                  {/* Cell 4: 超时与重试 */}
+                  <div className="grid grid-cols-2 gap-3 min-w-0">
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                      <input
+                        type="number"
+                        min="10"
+                        max="600"
+                        className={settingInputClass}
+                        value={auditLlm.timeoutSeconds ?? 300}
+                        onChange={e => setAuditLlm({ ...auditLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">最大重试上限</label>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 1 - 10 次</p>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        className={settingInputClass}
+                        value={auditLlm.maxRetries ?? 3}
+                        onChange={e => setAuditLlm({ ...auditLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
+                      />
+                    </div>
                   </div>
-                  <div className="space-y-1">
-                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">最大重试上限</label>
-                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 1 - 10 次</p>
-                    <input
-                      type="number"
-                      min="1"
-                      max="10"
-                      className={settingInputClass}
-                      value={auditLlm.maxRetries ?? 3}
-                      onChange={e => setAuditLlm({ ...auditLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
-                    />
-                  </div>
-                </div>
 
-                {/* Cell 5: System Prompt */}
-                <div className="min-w-0 space-y-1 sm:col-span-2">
-                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">助审系统 Prompt (系统的提示词)</label>
-                  <p className="text-[11px] text-slate-400 dark:text-slate-500">定义助审大模型的质量诊断与质量打分范式</p>
-                  <textarea
-                    className={`${settingInputClass} min-h-24 leading-relaxed font-mono text-xs`}
-                    placeholder="请输入助审 System Prompt"
-                    value={auditLlm.systemPrompt || ''}
-                    onChange={e => setAuditLlm({ ...auditLlm, systemPrompt: e.target.value })}
-                  />
-                  <div className="flex justify-end pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setAuditLlm({ ...auditLlm, systemPrompt: defaultAuditPrompt })}
-                      className="text-xs text-brand hover:underline font-semibold"
-                    >
-                      ↺ 重置为默认助审提示词
-                    </button>
+                  {/* Cell 5: System Prompt */}
+                  <div className="min-w-0 space-y-1 sm:col-span-2">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">助审系统 Prompt (系统的提示词)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">定义助审大模型的质量诊断与质量打分范式</p>
+                    <textarea
+                      className={`${settingInputClass} min-h-24 leading-relaxed font-mono text-xs`}
+                      placeholder="请输入助审 System Prompt"
+                      value={auditLlm.systemPrompt || ''}
+                      onChange={e => setAuditLlm({ ...auditLlm, systemPrompt: e.target.value })}
+                    />
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setAuditLlm({ ...auditLlm, systemPrompt: defaultAuditPrompt })}
+                        className="text-xs text-brand hover:underline font-semibold"
+                      >
+                        ↺ 重置为默认助审提示词
+                      </button>
+                    </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Bottom Right Actions Inside Consolidated LLM Card */}
+              <div className="flex justify-end pt-4 border-t border-slate-100 dark:border-slate-800/80">
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-brand px-6 py-2.5 text-xs sm:text-sm font-bold text-white shadow-xs shadow-brand/25 hover:bg-brand-dark transition-all duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+                >
+                  <span>💾</span>
+                  <span>{saving ? '保存中…' : '保存所有大模型配置'}</span>
+                </button>
               </div>
             </div>
           )}
         </section>
-      </div>
-
-      {/* Global Save Button Section */}
-      <div className="flex justify-end pt-2">
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-full bg-brand px-6 py-3 text-sm font-bold text-white shadow-md shadow-brand/30 hover:bg-brand-dark transition-all duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
-        >
-          <span>💾</span>
-          <span>{saving ? '保存中…' : '保存所有大模型配置'}</span>
-        </button>
       </div>
     </div>
   )
