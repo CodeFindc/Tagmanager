@@ -2515,6 +2515,28 @@ function SettingsPage() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
 
+  // Collapsible card states
+  const [openAccountCard, setOpenAccountCard] = useState(true)
+  const [openConsolidationCard, setOpenConsolidationCard] = useState(true)
+  const [openAuditCard, setOpenAuditCard] = useState(true)
+
+  // Account password change form state
+  const [oldPassword, setOldPassword] = useState('')
+  const [newEmail, setNewEmail] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [updatingAccount, setUpdatingAccount] = useState(false)
+  const [accountNotice, setAccountNotice] = useState('')
+  const [accountError, setAccountError] = useState('')
+
+  // Password visibility toggles
+  const [showOldPass, setShowOldPass] = useState(false)
+  const [showNewPass, setShowNewPass] = useState(false)
+  const [showConfirmPass, setShowConfirmPass] = useState(false)
+  const [showConsolidationKey, setShowConsolidationKey] = useState(false)
+  const [showAuditKey, setShowAuditKey] = useState(false)
+
+  // LLM Config states
   const [consolidationLlm, setConsolidationLlm] = useState<LLMServiceConfig>({
     baseUrl: '',
     apiKey: '',
@@ -2529,9 +2551,6 @@ function SettingsPage() {
     model: '',
     systemPrompt: '',
   })
-
-  const [showConsolidationKey, setShowConsolidationKey] = useState(false)
-  const [showAuditKey, setShowAuditKey] = useState(false)
 
   const [fetchingConsolidationModels, setFetchingConsolidationModels] = useState(false)
   const [consolidationModels, setConsolidationModels] = useState<string[]>([])
@@ -2609,6 +2628,41 @@ function SettingsPage() {
     }
   }
 
+  const handleAccountPasswordSubmit = async (e: FormEvent) => {
+    e.preventDefault()
+    setAccountNotice('')
+    setAccountError('')
+    if (!oldPassword) {
+      setAccountError('请输入当前旧密码以验证身份')
+      return
+    }
+    if (!newPassword) {
+      setAccountError('请输入新密码')
+      return
+    }
+    if (newPassword.length < 6) {
+      setAccountError('新密码长度不少于 6 位字符')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setAccountError('两次输入的新密码不一致，请重新核对')
+      return
+    }
+
+    setUpdatingAccount(true)
+    try {
+      await api.changePassword({ oldPassword, newPassword })
+      setOldPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setAccountNotice('账号登录密码已成功修改！后续登录请使用新密码。')
+    } catch (err) {
+      setAccountError(err instanceof Error ? err.message : '修改账号密码失败')
+    } finally {
+      setUpdatingAccount(false)
+    }
+  }
+
   const handleSave = async (e: FormEvent) => {
     e.preventDefault()
     setSaving(true)
@@ -2616,299 +2670,549 @@ function SettingsPage() {
     setError('')
     try {
       await api.updateSettings({ consolidationLlm, auditLlm })
-      setNotice('系统设置保存成功！后端与 Worker 将动态优先加载最新数据库配置。')
+      setNotice('大模型配置保存成功！后端 API 与 Worker 将在线同步动态感知加载最新数据库配置。')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存失败')
+      setError(err instanceof Error ? err.message : '保存大模型配置失败')
     } finally {
       setSaving(false)
     }
   }
 
-  if (loading) return <div className="p-8 text-center text-sm text-slate-500">正在载入设置中心…</div>
+  // Common Soft Blue Input Style: Light Grey default, Soft Blue focus/filled
+  const settingInputClass =
+    'w-full min-w-0 rounded-xl border border-slate-200/80 bg-slate-100/80 px-3.5 py-2.5 text-sm text-slate-900 outline-none transition-all duration-150 focus:border-brand focus:bg-[#EDF4FF] focus:ring-2 focus:ring-brand/20 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100 dark:placeholder-slate-500 dark:focus:border-brand dark:focus:bg-brand/20 dark:focus:ring-brand/30'
+
+  if (loading) return <div className="p-8 text-center text-sm font-medium text-slate-500 dark:text-slate-400">正在载入系统设置中心…</div>
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="设置中心"
-        description="图形化配置后端【标签归并大模型】与【AI 智能助审助手】的 Endpoint、API Key、Model 模型列表与 Prompt。配置优先写入数据库动态生效。"
+        description="图形化管理【账号安全】、【标签归并大模型引擎】与【AI 智能助审助手】。配置优先写入数据库并发在线无缝生效。"
       />
 
       {notice && <Notice message={notice} />}
       {error && <Notice message={error} />}
 
-      <form onSubmit={handleSave} className="space-y-6">
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-bold text-slate-900">1. 标签归并大模型配置 (Tag Consolidation LLM)</span>
-              <span className="rounded bg-brand/10 px-2 py-0.5 text-xs font-semibold text-brand">核心归并引擎</span>
-            </div>
-            <div className="flex items-center gap-2">
+      {/* Stacked Cards Section (自上而下自适应独立卡片堆叠) */}
+      <div className="space-y-5">
+        {/* Card 1: 账号安全与密码设置 */}
+        <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
+          {/* Card Header */}
+          <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
-                onClick={() => handleTestConnection('consolidation')}
-                disabled={testingConsolidation}
-                className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+                onClick={() => setOpenAccountCard(!openAccountCard)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                title={openAccountCard ? '收起卡片' : '展开卡片'}
               >
-                {testingConsolidation ? '测试中…' : '⚡ 测试连接'}
+                <span className={`text-xs transition-transform duration-200 ${openAccountCard ? 'rotate-0' : '-rotate-90'}`}>▼</span>
               </button>
+              <div className="min-w-0">
+                <h2 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                  账号安全与密码设置
+                  <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">安全控制</span>
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
+                  当前登录账号：<span className="font-semibold text-slate-700 dark:text-slate-200">admin@example.com</span> · 角色：<span className="font-mono text-brand">admin</span>
+                </p>
+              </div>
+            </div>
+            {/* Right Circle Icon */}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-base text-slate-600 dark:bg-slate-800 dark:text-slate-300 shadow-2xs">
+              👤
             </div>
           </div>
 
-          {consolidationTestRes && (
-            <div className={`rounded-lg border p-3 text-xs ${consolidationTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
-              <div className="font-semibold">{consolidationTestRes.success ? '✅ 测试连接成功' : '❌ 测试连接失败'}</div>
-              <p className="mt-0.5">{consolidationTestRes.message}</p>
-            </div>
-          )}
+          {/* Card Body */}
+          {openAccountCard && (
+            <div className="p-6 space-y-5">
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed border-b border-slate-100 pb-3 dark:border-slate-800/60">
+                为了保证您的系统运维与标签治理账号安全，建议定期更新登录密码。密码长度不少于 6 个字符。
+              </p>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Base URL (OpenAI 兼容 Endpoint)">
-              <input
-                className={inputClass}
-                placeholder="例如：https://api.openai.com/v1 或 https://api.deepseek.com/v1"
-                value={consolidationLlm.baseUrl}
-                onChange={e => setConsolidationLlm({ ...consolidationLlm, baseUrl: e.target.value })}
-              />
-            </Field>
+              {accountNotice && <SuccessNotice message={accountNotice} />}
+              {accountError && <Notice message={accountError} />}
 
-            <Field label="API Key">
-              <div className="relative">
-                <input
-                  type={showConsolidationKey ? 'text' : 'password'}
-                  className={`${inputClass} pr-16`}
-                  placeholder="sk-..."
-                  value={consolidationLlm.apiKey}
-                  onChange={e => setConsolidationLlm({ ...consolidationLlm, apiKey: e.target.value })}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConsolidationKey(!showConsolidationKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
-                >
-                  {showConsolidationKey ? '隐藏' : '显示'}
-                </button>
-              </div>
-            </Field>
+              <form onSubmit={handleAccountPasswordSubmit} className="space-y-5">
+                {/* 2x2 Grid Form Layout */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+                  {/* Cell 1: 新登录用户名/邮箱 */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">新登录用户名 / 邮箱</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">可选：如需更名（默认显示当前登录邮箱）</p>
+                    <input
+                      type="text"
+                      className={settingInputClass}
+                      placeholder="admin@example.com"
+                      value={newEmail}
+                      onChange={e => setNewEmail(e.target.value)}
+                    />
+                  </div>
 
-            <Field label="Model Name (模型名称)">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    className={`${inputClass} font-mono`}
-                    placeholder="如 gpt-4o-mini 或 deepseek-chat"
-                    value={consolidationLlm.model}
-                    onChange={e => setConsolidationLlm({ ...consolidationLlm, model: e.target.value })}
-                  />
+                  {/* Cell 2: 当前旧密码 */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">当前旧密码</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">验证当前管理员凭证后方可更新</p>
+                    <div className="relative">
+                      <input
+                        type={showOldPass ? 'text' : 'password'}
+                        required
+                        className={`${settingInputClass} pr-10`}
+                        placeholder="输入当前使用的旧密码"
+                        value={oldPassword}
+                        onChange={e => setOldPassword(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowOldPass(!showOldPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showOldPass ? '隐藏密码' : '显示密码'}
+                      >
+                        {showOldPass ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Cell 3: 设置新密码 */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">设置新密码</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">不少于 6 位字符，建议结合字母与数字</p>
+                    <div className="relative">
+                      <input
+                        type={showNewPass ? 'text' : 'password'}
+                        required
+                        className={`${settingInputClass} pr-10`}
+                        placeholder="请输入新密码"
+                        value={newPassword}
+                        onChange={e => setNewPassword(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPass(!showNewPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showNewPass ? '隐藏密码' : '显示密码'}
+                      >
+                        {showNewPass ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Cell 4: 确认新密码 */}
+                  <div className="min-w-0 space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">确认新密码</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">再次输入新密码进行确认</p>
+                    <div className="relative">
+                      <input
+                        type={showConfirmPass ? 'text' : 'password'}
+                        required
+                        className={`${settingInputClass} pr-10`}
+                        placeholder="请再次确认新密码"
+                        value={confirmPassword}
+                        onChange={e => setConfirmPassword(e.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPass(!showConfirmPass)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showConfirmPass ? '隐藏密码' : '显示密码'}
+                      >
+                        {showConfirmPass ? '🙈' : '👁️'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom Right Actions */}
+                <div className="flex justify-end pt-2">
                   <button
-                    type="button"
-                    onClick={() => handleFetchModels('consolidation')}
-                    disabled={fetchingConsolidationModels}
-                    className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                    type="submit"
+                    disabled={updatingAccount}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-brand px-5 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-xs shadow-brand/25 hover:bg-brand-dark transition-all duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
                   >
-                    {fetchingConsolidationModels ? '拉取中…' : '🔄 获取/刷新模型列表'}
+                    <span>🔑</span>
+                    <span>{updatingAccount ? '修改中…' : '修改账号密码'}</span>
                   </button>
                 </div>
-                {consolidationModels.length > 0 && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-slate-500 font-medium shrink-0">选择模型:</span>
-                    <select
+              </form>
+            </div>
+          )}
+        </section>
+
+        {/* Card 2: 标签归并大模型配置 (Consolidation LLM Engine) */}
+        <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
+          {/* Card Header */}
+          <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => setOpenConsolidationCard(!openConsolidationCard)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                title={openConsolidationCard ? '收起卡片' : '展开卡片'}
+              >
+                <span className={`text-xs transition-transform duration-200 ${openConsolidationCard ? 'rotate-0' : '-rotate-90'}`}>▼</span>
+              </button>
+              <div className="min-w-0">
+                <h2 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                  1. 标签归并大模型配置
+                  <span className="rounded-full bg-brand/10 px-2.5 py-0.5 text-[11px] font-semibold text-brand">核心归并引擎</span>
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
+                  用于候选词达到触发阀值后的自动聚类、规范名提炼与别名生成
+                </p>
+              </div>
+            </div>
+            {/* Right Circle Icon */}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-base text-brand dark:bg-brand/20 shadow-2xs">
+              🤖
+            </div>
+          </div>
+
+          {/* Card Body */}
+          {openConsolidationCard && (
+            <div className="p-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800/60">
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed min-w-0 flex-1">
+                  核心归并引擎通过 OpenAI 兼容 Chat Completions 接口调用。保存后后端 Worker 进程将无缝在线感知最新数据库配置。
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleTestConnection('consolidation')}
+                  disabled={testingConsolidation}
+                  className="shrink-0 rounded-full border border-emerald-300 bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-100 transition-colors cursor-pointer"
+                >
+                  {testingConsolidation ? '测试中…' : '⚡ 测试连接'}
+                </button>
+              </div>
+
+              {consolidationTestRes && (
+                <div className={`rounded-xl border p-3.5 text-xs ${consolidationTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
+                  <div className="font-semibold">{consolidationTestRes.success ? '✅ 归并引擎测试连接成功' : '❌ 归并引擎测试连接失败'}</div>
+                  <p className="mt-0.5 leading-relaxed">{consolidationTestRes.message}</p>
+                </div>
+              )}
+
+              {/* 2x2 Grid Form */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+                {/* Cell 1: Base URL */}
+                <div className="min-w-0 space-y-1">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Base URL (OpenAI 兼容 Endpoint)</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">模型 API 服务根地址，通常包含 /v1</p>
+                  <input
+                    className={settingInputClass}
+                    placeholder="例如：https://api.openai.com/v1 或 https://api.deepseek.com/v1"
+                    value={consolidationLlm.baseUrl}
+                    onChange={e => setConsolidationLlm({ ...consolidationLlm, baseUrl: e.target.value })}
+                  />
+                </div>
+
+                {/* Cell 2: API Key */}
+                <div className="min-w-0 space-y-1">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">API Key 访问凭证</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">仅存存于后端加密节点，绝对不透传至浏览器</p>
+                  <div className="relative">
+                    <input
+                      type={showConsolidationKey ? 'text' : 'password'}
+                      className={`${settingInputClass} pr-10`}
+                      placeholder="sk-..."
+                      value={consolidationLlm.apiKey}
+                      onChange={e => setConsolidationLlm({ ...consolidationLlm, apiKey: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConsolidationKey(!showConsolidationKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      title={showConsolidationKey ? '隐藏 API Key' : '显示 API Key'}
+                    >
+                      {showConsolidationKey ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Cell 3: Model Name */}
+                <div className="min-w-0 space-y-1 sm:col-span-2 lg:col-span-1">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Model Name (模型名称)</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">手动填写或点击在线获取可用模型名称</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      className={`${settingInputClass} font-mono`}
+                      placeholder="如 gpt-4o-mini 或 deepseek-chat"
                       value={consolidationLlm.model}
                       onChange={e => setConsolidationLlm({ ...consolidationLlm, model: e.target.value })}
-                      className="w-full rounded border border-slate-200 bg-white px-2 py-1 outline-none text-xs font-medium"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleFetchModels('consolidation')}
+                      disabled={fetchingConsolidationModels}
+                      className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
                     >
-                      <option value="">-- 请选择在线拉取的模型 --</option>
-                      {consolidationModels.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
+                      {fetchingConsolidationModels ? '拉取中…' : '🔄 获取列表'}
+                    </button>
                   </div>
-                )}
+                  {consolidationModels.length > 0 && (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                      <span className="text-slate-500 font-medium shrink-0">下拉选择:</span>
+                      <select
+                        value={consolidationLlm.model}
+                        onChange={e => setConsolidationLlm({ ...consolidationLlm, model: e.target.value })}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none"
+                      >
+                        <option value="">-- 请选择在线拉取的模型 --</option>
+                        {consolidationModels.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Cell 4: 超时与重试 */}
+                <div className="grid grid-cols-2 gap-3 min-w-0">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                    <input
+                      type="number"
+                      min="10"
+                      max="600"
+                      className={settingInputClass}
+                      value={consolidationLlm.timeoutSeconds ?? 300}
+                      onChange={e => setConsolidationLlm({ ...consolidationLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">最大重试上限</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 1 - 10 次</p>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      className={settingInputClass}
+                      value={consolidationLlm.maxRetries ?? 3}
+                      onChange={e => setConsolidationLlm({ ...consolidationLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
+                    />
+                  </div>
+                </div>
+
+                {/* Cell 5: System Prompt */}
+                <div className="min-w-0 space-y-1 sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">标签归并 System Prompt (系统提示词)</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">定义大模型的归并泛化逻辑与约束规则</p>
+                  <textarea
+                    className={`${settingInputClass} min-h-24 leading-relaxed font-mono text-xs`}
+                    placeholder="请输入归并 System Prompt"
+                    value={consolidationLlm.systemPrompt || ''}
+                    onChange={e => setConsolidationLlm({ ...consolidationLlm, systemPrompt: e.target.value })}
+                  />
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setConsolidationLlm({ ...consolidationLlm, systemPrompt: defaultConsolidationPrompt })}
+                      className="text-xs text-brand hover:underline font-semibold"
+                    >
+                      ↺ 重置为默认归并提示词
+                    </button>
+                  </div>
+                </div>
               </div>
-            </Field>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="超时时间 (秒)">
-                <input
-                  type="number"
-                  min="10"
-                  max="600"
-                  className={inputClass}
-                  value={consolidationLlm.timeoutSeconds ?? 300}
-                  onChange={e => setConsolidationLlm({ ...consolidationLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
-                />
-              </Field>
-              <Field label="最大重试次数">
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  className={inputClass}
-                  value={consolidationLlm.maxRetries ?? 3}
-                  onChange={e => setConsolidationLlm({ ...consolidationLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
-                />
-              </Field>
-            </div>
-
-            <Field label="标签归并 System Prompt" className="sm:col-span-2">
-              <textarea
-                className={`${inputClass} min-h-24 text-xs leading-relaxed`}
-                placeholder="提示词设定"
-                value={consolidationLlm.systemPrompt || ''}
-                onChange={e => setConsolidationLlm({ ...consolidationLlm, systemPrompt: e.target.value })}
-              />
-              <div className="flex justify-end mt-1">
-                <button
-                  type="button"
-                  onClick={() => setConsolidationLlm({ ...consolidationLlm, systemPrompt: defaultConsolidationPrompt })}
-                  className="text-[11px] text-brand hover:underline font-medium"
-                >
-                  重置为默认提示词
-                </button>
-              </div>
-            </Field>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-base font-bold text-slate-900">2. AI 智能助审助手配置 (AI Audit Assistant LLM)</span>
-              <span className="rounded bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-800">审核中心 Copilot</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleTestConnection('audit')}
-                disabled={testingAudit}
-                className="rounded-lg border border-purple-300 bg-purple-50 px-3 py-1 text-xs font-semibold text-purple-800 hover:bg-purple-100"
-              >
-                {testingAudit ? '测试中…' : '⚡ 测试连接'}
-              </button>
-            </div>
-          </div>
-
-          {auditTestRes && (
-            <div className={`rounded-lg border p-3 text-xs ${auditTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
-              <div className="font-semibold">{auditTestRes.success ? '✅ 测试连接成功' : '❌ 测试连接失败'}</div>
-              <p className="mt-0.5">{auditTestRes.message}</p>
             </div>
           )}
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field label="Base URL (OpenAI 兼容 Endpoint)">
-              <input
-                className={inputClass}
-                placeholder="例如：https://api.openai.com/v1"
-                value={auditLlm.baseUrl}
-                onChange={e => setAuditLlm({ ...auditLlm, baseUrl: e.target.value })}
-              />
-            </Field>
-
-            <Field label="API Key">
-              <div className="relative">
-                <input
-                  type={showAuditKey ? 'text' : 'password'}
-                  className={`${inputClass} pr-16`}
-                  placeholder="sk-..."
-                  value={auditLlm.apiKey}
-                  onChange={e => setAuditLlm({ ...auditLlm, apiKey: e.target.value })}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowAuditKey(!showAuditKey)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600"
-                >
-                  {showAuditKey ? '隐藏' : '显示'}
-                </button>
-              </div>
-            </Field>
-
-            <Field label="Model Name (模型名称)">
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <input
-                    className={`${inputClass} font-mono`}
-                    placeholder="如 gpt-4o-mini 或 deepseek-chat"
-                    value={auditLlm.model}
-                    onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleFetchModels('audit')}
-                    disabled={fetchingAuditModels}
-                    className="shrink-0 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100"
-                  >
-                    {fetchingAuditModels ? '拉取中…' : '🔄 获取/刷新模型列表'}
-                  </button>
-                </div>
-                {auditModels.length > 0 && (
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="text-slate-500 font-medium shrink-0">选择模型:</span>
-                    <select
-                      value={auditLlm.model}
-                      onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
-                      className="w-full rounded border border-slate-200 bg-white px-2 py-1 outline-none text-xs font-medium"
-                    >
-                      <option value="">-- 请选择在线拉取的模型 --</option>
-                      {auditModels.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-            </Field>
-
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="超时时间 (秒)">
-                <input
-                  type="number"
-                  min="10"
-                  max="600"
-                  className={inputClass}
-                  value={auditLlm.timeoutSeconds ?? 300}
-                  onChange={e => setAuditLlm({ ...auditLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
-                />
-              </Field>
-              <Field label="最大重试次数">
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  className={inputClass}
-                  value={auditLlm.maxRetries ?? 3}
-                  onChange={e => setAuditLlm({ ...auditLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
-                />
-              </Field>
-            </div>
-
-            <Field label="助审系统 Prompt" className="sm:col-span-2">
-              <textarea
-                className={`${inputClass} min-h-24 text-xs leading-relaxed`}
-                placeholder="提示词设定"
-                value={auditLlm.systemPrompt || ''}
-                onChange={e => setAuditLlm({ ...auditLlm, systemPrompt: e.target.value })}
-              />
-              <div className="flex justify-end mt-1">
-                <button
-                  type="button"
-                  onClick={() => setAuditLlm({ ...auditLlm, systemPrompt: defaultAuditPrompt })}
-                  className="text-[11px] text-brand hover:underline font-medium"
-                >
-                  重置为默认提示词
-                </button>
-              </div>
-            </Field>
-          </div>
         </section>
 
-        <div className="flex justify-end">
-          <button type="submit" disabled={saving} className={`${btnPrimary} px-6 py-2.5 text-sm`}>
-            {saving ? '保存中…' : '💾 保存所有大模型配置'}
-          </button>
-        </div>
-      </form>
+        {/* Card 3: AI 智能助审助手配置 (Audit Copilot LLM) */}
+        <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
+          {/* Card Header */}
+          <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
+            <div className="flex items-center gap-3 min-w-0">
+              <button
+                type="button"
+                onClick={() => setOpenAuditCard(!openAuditCard)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                title={openAuditCard ? '收起卡片' : '展开卡片'}
+              >
+                <span className={`text-xs transition-transform duration-200 ${openAuditCard ? 'rotate-0' : '-rotate-90'}`}>▼</span>
+              </button>
+              <div className="min-w-0">
+                <h2 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                  2. AI 智能助审助手配置
+                  <span className="rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-semibold text-purple-800 dark:bg-purple-950/80 dark:text-purple-300">审核中心 Copilot</span>
+                </h2>
+                <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 truncate">
+                  用于审核中心提案评估的 SSE 流式长连接实时推理助手
+                </p>
+              </div>
+            </div>
+            {/* Right Circle Icon */}
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-purple-50 text-base text-purple-700 dark:bg-purple-950/80 dark:text-purple-300 shadow-2xs">
+              ⚖️
+            </div>
+          </div>
+
+          {/* Card Body */}
+          {openAuditCard && (
+            <div className="p-6 space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3 dark:border-slate-800/60">
+                <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed min-w-0 flex-1">
+                  助审助手采用 SSE 长连接流式输出，后端已配置 5 秒 Nginx 保活心跳防 504 Gateway Time-out 截断机制。
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleTestConnection('audit')}
+                  disabled={testingAudit}
+                  className="shrink-0 rounded-full border border-purple-300 bg-purple-50 px-3.5 py-1.5 text-xs font-semibold text-purple-800 hover:bg-purple-100 transition-colors cursor-pointer"
+                >
+                  {testingAudit ? '测试中…' : '⚡ 测试连接'}
+                </button>
+              </div>
+
+              {auditTestRes && (
+                <div className={`rounded-xl border p-3.5 text-xs ${auditTestRes.success ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'}`}>
+                  <div className="font-semibold">{auditTestRes.success ? '✅ 助审助手测试连接成功' : '❌ 助审助手测试连接失败'}</div>
+                  <p className="mt-0.5 leading-relaxed">{auditTestRes.message}</p>
+                </div>
+              )}
+
+              {/* 2x2 Grid Form */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 sm:gap-6">
+                {/* Cell 1: Base URL */}
+                <div className="min-w-0 space-y-1">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Base URL (OpenAI 兼容 Endpoint)</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">模型 API 服务根地址，通常包含 /v1</p>
+                  <input
+                    className={settingInputClass}
+                    placeholder="例如：https://api.openai.com/v1"
+                    value={auditLlm.baseUrl}
+                    onChange={e => setAuditLlm({ ...auditLlm, baseUrl: e.target.value })}
+                  />
+                </div>
+
+                {/* Cell 2: API Key */}
+                <div className="min-w-0 space-y-1">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">API Key 访问凭证</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">仅存于后端加密节点，绝对不透传至浏览器</p>
+                  <div className="relative">
+                    <input
+                      type={showAuditKey ? 'text' : 'password'}
+                      className={`${settingInputClass} pr-10`}
+                      placeholder="sk-..."
+                      value={auditLlm.apiKey}
+                      onChange={e => setAuditLlm({ ...auditLlm, apiKey: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowAuditKey(!showAuditKey)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                      title={showAuditKey ? '隐藏 API Key' : '显示 API Key'}
+                    >
+                      {showAuditKey ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Cell 3: Model Name */}
+                <div className="min-w-0 space-y-1 sm:col-span-2 lg:col-span-1">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">Model Name (模型名称)</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">手动填写或点击在线获取可用模型名称</p>
+                  <div className="flex items-center gap-2">
+                    <input
+                      className={`${settingInputClass} font-mono`}
+                      placeholder="如 gpt-4o-mini 或 deepseek-chat"
+                      value={auditLlm.model}
+                      onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleFetchModels('audit')}
+                      disabled={fetchingAuditModels}
+                      className="shrink-0 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      {fetchingAuditModels ? '拉取中…' : '🔄 获取列表'}
+                    </button>
+                  </div>
+                  {auditModels.length > 0 && (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                      <span className="text-slate-500 font-medium shrink-0">下拉选择:</span>
+                      <select
+                        value={auditLlm.model}
+                        onChange={e => setAuditLlm({ ...auditLlm, model: e.target.value })}
+                        className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 outline-none"
+                      >
+                        <option value="">-- 请选择在线拉取的模型 --</option>
+                        {auditModels.map(m => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {/* Cell 4: 超时与重试 */}
+                <div className="grid grid-cols-2 gap-3 min-w-0">
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                    <input
+                      type="number"
+                      min="10"
+                      max="600"
+                      className={settingInputClass}
+                      value={auditLlm.timeoutSeconds ?? 300}
+                      onChange={e => setAuditLlm({ ...auditLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">最大重试上限</label>
+                    <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 1 - 10 次</p>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10"
+                      className={settingInputClass}
+                      value={auditLlm.maxRetries ?? 3}
+                      onChange={e => setAuditLlm({ ...auditLlm, maxRetries: parseInt(e.target.value, 10) || 3 })}
+                    />
+                  </div>
+                </div>
+
+                {/* Cell 5: System Prompt */}
+                <div className="min-w-0 space-y-1 sm:col-span-2">
+                  <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">助审系统 Prompt (系统的提示词)</label>
+                  <p className="text-[11px] text-slate-400 dark:text-slate-500">定义助审大模型的质量诊断与质量打分范式</p>
+                  <textarea
+                    className={`${settingInputClass} min-h-24 leading-relaxed font-mono text-xs`}
+                    placeholder="请输入助审 System Prompt"
+                    value={auditLlm.systemPrompt || ''}
+                    onChange={e => setAuditLlm({ ...auditLlm, systemPrompt: e.target.value })}
+                  />
+                  <div className="flex justify-end pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setAuditLlm({ ...auditLlm, systemPrompt: defaultAuditPrompt })}
+                      className="text-xs text-brand hover:underline font-semibold"
+                    >
+                      ↺ 重置为默认助审提示词
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Global Save Button Section */}
+      <div className="flex justify-end pt-2">
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          className="inline-flex items-center gap-1.5 rounded-full bg-brand px-6 py-3 text-sm font-bold text-white shadow-md shadow-brand/30 hover:bg-brand-dark transition-all duration-150 active:scale-[0.98] disabled:opacity-50 cursor-pointer"
+        >
+          <span>💾</span>
+          <span>{saving ? '保存中…' : '保存所有大模型配置'}</span>
+        </button>
+      </div>
     </div>
   )
 }
