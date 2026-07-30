@@ -119,10 +119,10 @@ export function App() {
     <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 p-4 sm:p-5 transition-colors duration-200">
       <div className="mx-auto flex max-w-[1600px] gap-5 items-start">
         {/* Floating Left Sidebar Card */}
-        <aside className="sticky top-5 h-[calc(100vh-2.5rem)] w-64 shrink-0 flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800/80 dark:bg-slate-900 select-none">
-          <div className="space-y-6">
+        <aside className="sticky top-5 h-[calc(100vh-2.5rem)] max-h-[calc(100vh-2.5rem)] w-64 shrink-0 flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800/80 dark:bg-slate-900 select-none overflow-hidden">
+          <div className="flex flex-col min-h-0 flex-1 space-y-4">
             {/* Brand Logo & Subtitle */}
-            <div className="flex items-center gap-3 px-2 pt-2">
+            <div className="flex items-center gap-3 px-2 pt-2 shrink-0">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-brand to-indigo-600 font-bold text-white shadow-md shadow-brand/20">
                 🏷️
               </div>
@@ -132,8 +132,8 @@ export function App() {
               </div>
             </div>
 
-            {/* Navigation Items */}
-            <nav className="space-y-1">
+            {/* Navigation Items (Scrollable internally on short viewports/zooms) */}
+            <nav className="space-y-1 min-h-0 flex-1 overflow-y-auto pr-1">
               {menuItems.map(item => (
                 <NavLink
                   key={item.to}
@@ -154,8 +154,8 @@ export function App() {
             </nav>
           </div>
 
-          {/* Sidebar Footer: Theme Toggle & User Panel */}
-          <div className="space-y-3 pt-4 border-t border-slate-200/80 dark:border-slate-800/80">
+          {/* Sidebar Footer: Theme Toggle & User Panel (Pinned to bottom, never pushed offscreen) */}
+          <div className="shrink-0 space-y-3 pt-3 border-t border-slate-200/80 dark:border-slate-800/80">
             {/* Theme Toggle Button */}
             <button
               type="button"
@@ -2515,10 +2515,10 @@ function SettingsPage() {
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
 
-  // Collapsible card states
-  const [openAccountCard, setOpenAccountCard] = useState(true)
-  const [openConsolidationCard, setOpenConsolidationCard] = useState(true)
-  const [openAuditCard, setOpenAuditCard] = useState(true)
+  // Collapsible card states (Default collapsed)
+  const [openAccountCard, setOpenAccountCard] = useState(false)
+  const [openConsolidationCard, setOpenConsolidationCard] = useState(false)
+  const [openAuditCard, setOpenAuditCard] = useState(false)
 
   // Account password change form state
   const [oldPassword, setOldPassword] = useState('')
