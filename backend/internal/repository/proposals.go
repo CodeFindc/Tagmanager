@@ -208,8 +208,8 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 	if err := tx.QueryRow(ctx, `SELECT namespace_id,pool_window_id,status,version FROM consolidation_proposals WHERE id=$1 FOR UPDATE`, proposalID).Scan(&namespaceID, &windowID, &status, &currentVersion); err != nil {
 		return err
 	}
-	if status != "pending_review" {
-		return fmt.Errorf("proposal is no longer pending review")
+	if status != "pending_review" && status != "approved" {
+		return fmt.Errorf("proposal status (%s) is not eligible for review modification", status)
 	}
 	if decision.Version != currentVersion {
 		return fmt.Errorf("proposal was updated by another reviewer")
@@ -251,6 +251,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 	rows.Close()
 
 	deferred := []proposalTagRow{}
+	unaccepted := []proposalTagRow{}
 	for _, row := range existing {
 		id, canonical, description, aliases := row.id, row.canonical, row.description, row.aliases
 		choice, supplied := selected[id]
@@ -267,22 +268,56 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 				aliases = choice.Aliases
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE proposal_tags SET accepted=$2,edited_name=$3,edited_description=$4 WHERE id=$1`, id, accepted, canonical, description); err != nil {
+		aliasesJSON, _ := json.Marshal(aliases)
+		if _, err := tx.Exec(ctx, `UPDATE proposal_tags SET accepted=$2,edited_name=$3,edited_description=$4,aliases=$5 WHERE id=$1`, id, accepted, canonical, description, aliasesJSON); err != nil {
 			return err
 		}
 		if accepted {
 			deferred = append(deferred, proposalTagRow{id, canonical, description, aliases})
+		} else {
+			unaccepted = append(unaccepted, proposalTagRow{id, canonical, description, aliases})
 		}
 	}
 
 	if action == "approve" {
+		// Handle unaccepted/reverted tags (logical delete if tag was created by this proposal, unresolve candidate entries)
+		for _, item := range unaccepted {
+			norm := normalize(item.canonical)
+			// Logical delete tag in tags table if it was created by this proposal
+			if _, err := tx.Exec(ctx, `
+				UPDATE tags 
+				SET status = 'archived', updated_at = now() 
+				WHERE namespace_id = $1 
+				  AND source_proposal_id = $2 
+				  AND (normalized_name = $3 OR canonical_name = $4)
+			`, namespaceID, proposalID, norm, item.canonical); err != nil {
+				return err
+			}
+			// Delete any aliases for this logically deleted tag
+			if _, err := tx.Exec(ctx, `
+				DELETE FROM tag_aliases 
+				WHERE namespace_id = $1 
+				  AND tag_id IN (SELECT id FROM tags WHERE namespace_id = $1 AND source_proposal_id = $2 AND (normalized_name = $3 OR canonical_name = $4))
+			`, namespaceID, proposalID, norm, item.canonical); err != nil {
+				return err
+			}
+			// Release all candidate pool entries mapped to this proposal tag back to candidate pool
+			if _, err := tx.Exec(ctx, `
+				UPDATE candidate_pool_entries 
+				SET resolved_at = NULL 
+				WHERE id IN (SELECT candidate_pool_entry_id FROM proposal_mappings WHERE proposal_tag_id = $1)
+			`, item.id); err != nil {
+				return err
+			}
+		}
+
 		for _, item := range deferred {
 			normalized := normalize(item.canonical)
 			if normalized == "" {
 				return fmt.Errorf("accepted tag %q is invalid after normalization", item.canonical)
 			}
 			var tagID string
-			err := tx.QueryRow(ctx, `INSERT INTO tags(namespace_id,canonical_name,normalized_name,description,source_proposal_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT(namespace_id,normalized_name) DO UPDATE SET canonical_name=EXCLUDED.canonical_name,description=EXCLUDED.description,version=tags.version+1,updated_at=now() RETURNING id`, namespaceID, item.canonical, normalized, item.description, proposalID).Scan(&tagID)
+			err := tx.QueryRow(ctx, `INSERT INTO tags(namespace_id,canonical_name,normalized_name,description,source_proposal_id,status) VALUES($1,$2,$3,$4,$5,'published') ON CONFLICT(namespace_id,normalized_name) DO UPDATE SET canonical_name=EXCLUDED.canonical_name,description=EXCLUDED.description,status='published',version=tags.version+1,updated_at=now() RETURNING id`, namespaceID, item.canonical, normalized, item.description, proposalID).Scan(&tagID)
 			if err != nil {
 				return err
 			}
@@ -301,6 +336,7 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 					return err
 				}
 			}
+			// Resolve candidate entries for canonical and active aliases
 			if _, err := tx.Exec(ctx, `
 				UPDATE candidate_pool_entries 
 				SET resolved_at = now() 
@@ -310,6 +346,20 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 					JOIN candidate_pool_entries c ON c.id = pm.candidate_pool_entry_id
 					WHERE pm.proposal_tag_id = $1
 					  AND c.normalized_name = ANY($2::text[])
+				)
+			`, item.id, validNormalizedNames); err != nil {
+				return err
+			}
+			// Reopen/unresolve candidate pool entries for reverted aliases (not in validNormalizedNames)
+			if _, err := tx.Exec(ctx, `
+				UPDATE candidate_pool_entries 
+				SET resolved_at = NULL 
+				WHERE id IN (
+					SELECT pm.candidate_pool_entry_id 
+					FROM proposal_mappings pm
+					JOIN candidate_pool_entries c ON c.id = pm.candidate_pool_entry_id
+					WHERE pm.proposal_tag_id = $1
+					  AND NOT (c.normalized_name = ANY($2::text[]))
 				)
 			`, item.id, validNormalizedNames); err != nil {
 				return err

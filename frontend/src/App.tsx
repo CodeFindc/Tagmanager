@@ -1280,7 +1280,7 @@ function ReviewPage() {
       {active && (
         <ProposalModal
           proposal={active}
-          readonly={!isPendingProposal(active.status)}
+          readonly={active.status === 'rejected'}
           busy={busy}
           error={error}
           comments={comments}
@@ -1960,15 +1960,28 @@ function ProposalModal({
       {!readonly && (
         <div className="sticky bottom-0 flex flex-col-reverse gap-2 border-t border-slate-100 bg-white px-5 py-3 sm:flex-row sm:justify-end">
           <button type="button" disabled={busy} onClick={onClose} className={btnSecondary}>取消</button>
-          <button type="button" disabled={busy} onClick={() => onDecide('discard')} className={btnWarning}>
-            {busy ? '提交中…' : '终止提案'}
-          </button>
-          <button type="button" disabled={busy} onClick={() => onDecide('reject')} className={btnDanger}>
-            {busy ? '提交中…' : '驳回重跑'}
-          </button>
-          <button type="button" disabled={busy} onClick={() => onDecide('approve')} className={btnSuccess}>
-            {busy ? '提交中…' : `批准提交（${acceptedCount}/${proposal.tags.length}）`}
-          </button>
+          {proposal.status === 'approved' ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onDecide('approve')}
+              className="rounded-lg bg-brand px-4 py-2 text-xs font-semibold text-white hover:bg-brand-dark shadow-sm flex items-center gap-1.5"
+            >
+              {busy ? '保存中…' : `💾 保存回退修正 (更新已审核提案)`}
+            </button>
+          ) : (
+            <>
+              <button type="button" disabled={busy} onClick={() => onDecide('discard')} className={btnWarning}>
+                {busy ? '提交中…' : '终止提案'}
+              </button>
+              <button type="button" disabled={busy} onClick={() => onDecide('reject')} className={btnDanger}>
+                {busy ? '提交中…' : '驳回重跑'}
+              </button>
+              <button type="button" disabled={busy} onClick={() => onDecide('approve')} className={btnSuccess}>
+                {busy ? '提交中…' : `批准提交（${acceptedCount}/${proposal.tags.length}）`}
+              </button>
+            </>
+          )}
         </div>
       )}
 
