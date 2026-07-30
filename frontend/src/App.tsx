@@ -1077,6 +1077,7 @@ interface ItemEditState {
   canonicalName: string
   description: string
   aliases: string
+  revertedAliases?: string[]
 }
 
 type ReviewTab = 'pending' | 'reviewed'
@@ -1095,6 +1096,7 @@ function buildItemEdits(proposal: Proposal): Record<string, ItemEditState> {
       canonicalName: tag.canonicalName || '',
       description: tag.description || '',
       aliases: aliases.join(', '),
+      revertedAliases: [],
     }
   }
   return edits
@@ -1687,15 +1689,48 @@ function ProposalModal({
           ) : (
             <div className="grid gap-3 xl:grid-cols-2">
               {visibleTags.map(tag => {
-                const aliases = tag.aliases || []
-                const coveredEntryIds = tag.coveredEntryIds || []
                 const edit = itemEdits[tag.id] ?? {
                   accepted: tag.accepted ?? true,
                   canonicalName: tag.canonicalName || '',
                   description: tag.description || '',
-                  aliases: aliases.join(', '),
+                  aliases: (tag.aliases || []).join(', '),
+                  revertedAliases: [],
                 }
+                const activeAliasList = edit.aliases.split(',').map(s => s.trim()).filter(Boolean)
+                const revertedList = edit.revertedAliases || []
+                const coveredEntryIds = tag.coveredEntryIds || []
                 const advice = adviceMap.get(tag.canonicalName)
+
+                const handleRevertSingle = (aliasToRevert: string) => {
+                  const nextActive = activeAliasList.filter(a => a !== aliasToRevert)
+                  const nextReverted = Array.from(new Set([...revertedList, aliasToRevert]))
+                  const isAutoDiscard = nextActive.length === 0
+                  onUpdateItem(tag.id, {
+                    accepted: isAutoDiscard ? false : edit.accepted,
+                    aliases: nextActive.join(', '),
+                    revertedAliases: nextReverted,
+                  })
+                }
+
+                const handleRestoreSingle = (aliasToRestore: string) => {
+                  const nextActive = Array.from(new Set([...activeAliasList, aliasToRestore]))
+                  const nextReverted = revertedList.filter(a => a !== aliasToRestore)
+                  onUpdateItem(tag.id, {
+                    accepted: true,
+                    aliases: nextActive.join(', '),
+                    revertedAliases: nextReverted,
+                  })
+                }
+
+                const handleRestoreAll = () => {
+                  const nextActive = Array.from(new Set([...activeAliasList, ...revertedList]))
+                  onUpdateItem(tag.id, {
+                    accepted: true,
+                    aliases: nextActive.join(', '),
+                    revertedAliases: [],
+                  })
+                }
+
                 return (
                   <div
                     key={tag.id}
@@ -1767,15 +1802,7 @@ function ProposalModal({
                           onChange={e => onUpdateItem(tag.id, { canonicalName: e.target.value })}
                         />
                       </Field>
-                      <Field label="新增别名 (逗号分隔)">
-                        <input
-                          disabled={!edit.accepted || readonly}
-                          className={`${inputClass} py-1.5`}
-                          value={edit.aliases}
-                          onChange={e => onUpdateItem(tag.id, { aliases: e.target.value })}
-                        />
-                      </Field>
-                      <Field label="描述" className="sm:col-span-2">
+                      <Field label="描述">
                         <input
                           disabled={!edit.accepted || readonly}
                           className={`${inputClass} py-1.5`}
@@ -1784,6 +1811,116 @@ function ProposalModal({
                         />
                       </Field>
                     </div>
+
+                    {/* Alias Management & Revert Section */}
+                    <div className="mt-3 space-y-1.5 rounded-lg border border-slate-200/80 bg-white p-2.5">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
+                        <span>新增别名列表 ({activeAliasList.length}):</span>
+                        {!readonly && edit.accepted && activeAliasList.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              activeAliasList.forEach(a => handleRevertSingle(a))
+                            }}
+                            className="text-[11px] font-normal text-amber-700 hover:text-amber-900 hover:underline"
+                          >
+                            ↩️ 一键回退所有别名
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5 min-h-6">
+                        {activeAliasList.length === 0 ? (
+                          <span className="text-xs italic text-slate-400">暂无生效别名</span>
+                        ) : (
+                          activeAliasList.map(alias => (
+                            <span
+                              key={alias}
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-800 shadow-2xs"
+                            >
+                              <span>{alias}</span>
+                              {!readonly && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRevertSingle(alias)}
+                                  className="ml-0.5 rounded px-1 py-0.2 text-[11px] font-bold text-amber-700 hover:bg-amber-100 hover:text-amber-900"
+                                  title="回退此别名至候选池 (在本提案中不归并)"
+                                >
+                                  ↩️ 回退
+                                </button>
+                              )}
+                            </span>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Reverted Aliases List */}
+                      {revertedList.length > 0 && (
+                        <div className="mt-2 rounded-lg bg-amber-50/80 p-2.5 border border-amber-200 text-xs text-amber-950 space-y-1">
+                          <div className="flex items-center justify-between font-semibold">
+                            <span>↩️ 已回退至候选池别名 ({revertedList.length}):</span>
+                            {!readonly && (
+                              <button
+                                type="button"
+                                onClick={handleRestoreAll}
+                                className="text-[11px] font-normal text-amber-800 hover:underline"
+                              >
+                                ↺ 恢复全部别名
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {revertedList.map(alias => (
+                              <span
+                                key={alias}
+                                className="inline-flex items-center gap-1 rounded-md bg-amber-100/90 border border-amber-300/80 px-2 py-0.5 text-[11px] text-amber-900 font-medium"
+                              >
+                                <span className="line-through opacity-70">{alias}</span>
+                                {!readonly && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRestoreSingle(alias)}
+                                    className="ml-0.5 font-bold text-amber-800 hover:text-amber-950 hover:underline"
+                                    title="撤销回退，重新恢复此别名"
+                                  >
+                                    ↺ 恢复
+                                  </button>
+                                )}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Auto-discard Warning Notice */}
+                      {!edit.accepted && revertedList.length > 0 && activeAliasList.length === 0 && (
+                        <div className="mt-1.5 rounded-md bg-rose-50 border border-rose-200 p-2 text-[11px] text-rose-800 flex items-center justify-between">
+                          <span>⚠️ 该主标签下别名已全部回退至候选池，提交时将自动剔除此主标签。</span>
+                          {!readonly && (
+                            <button
+                              type="button"
+                              onClick={handleRestoreAll}
+                              className="font-semibold underline shrink-0 hover:text-rose-950"
+                            >
+                              恢复别名
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {!readonly && (
+                        <div className="pt-1">
+                          <input
+                            disabled={!edit.accepted && activeAliasList.length === 0}
+                            className={`${inputClass} py-1 text-xs`}
+                            placeholder="手动修改或补全别名 (多个用逗号分隔)"
+                            value={edit.aliases}
+                            onChange={e => onUpdateItem(tag.id, { aliases: e.target.value })}
+                          />
+                        </div>
+                      )}
+                    </div>
+
                     {tag.rationale && (
                       <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500" title={tag.rationale}>
                         理由：{tag.rationale}

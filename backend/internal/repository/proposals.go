@@ -289,17 +289,29 @@ func (s *Store) DecideProposal(ctx context.Context, proposalID, reviewerID strin
 			if _, err := tx.Exec(ctx, `DELETE FROM tag_aliases WHERE tag_id=$1`, tagID); err != nil {
 				return err
 			}
+			validNormalizedNames := []string{normalized}
 			for _, alias := range item.aliases {
 				alias = strings.TrimSpace(alias)
 				aliasNormalized := normalize(alias)
 				if aliasNormalized == "" || aliasNormalized == normalized {
 					continue
 				}
+				validNormalizedNames = append(validNormalizedNames, aliasNormalized)
 				if _, err := tx.Exec(ctx, `INSERT INTO tag_aliases(tag_id,namespace_id,alias_name,normalized_name) VALUES($1,$2,$3,$4) ON CONFLICT(namespace_id,normalized_name) DO NOTHING`, tagID, namespaceID, alias, aliasNormalized); err != nil {
 					return err
 				}
 			}
-			if _, err := tx.Exec(ctx, `UPDATE candidate_pool_entries SET resolved_at=now() WHERE id IN (SELECT candidate_pool_entry_id FROM proposal_mappings WHERE proposal_tag_id=$1)`, item.id); err != nil {
+			if _, err := tx.Exec(ctx, `
+				UPDATE candidate_pool_entries 
+				SET resolved_at = now() 
+				WHERE id IN (
+					SELECT pm.candidate_pool_entry_id 
+					FROM proposal_mappings pm
+					JOIN candidate_pool_entries c ON c.id = pm.candidate_pool_entry_id
+					WHERE pm.proposal_tag_id = $1
+					  AND c.normalized_name = ANY($2::text[])
+				)
+			`, item.id, validNormalizedNames); err != nil {
 				return err
 			}
 		}
