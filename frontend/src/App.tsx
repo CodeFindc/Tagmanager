@@ -132,8 +132,8 @@ export function App() {
               </div>
             </div>
 
-            {/* Navigation Items (Scrollable internally on short viewports/zooms) */}
-            <nav className="space-y-1 min-h-0 flex-1 overflow-y-auto pr-1">
+            {/* Navigation Items (Smooth hidden scrollbar) */}
+            <nav className="space-y-1 min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {menuItems.map(item => (
                 <NavLink
                   key={item.to}
@@ -154,59 +154,46 @@ export function App() {
             </nav>
           </div>
 
-          {/* Sidebar Footer: Theme Toggle & User Panel (Pinned to bottom, never pushed offscreen) */}
-          <div className="shrink-0 space-y-3 pt-3 border-t border-slate-200/80 dark:border-slate-800/80">
-            {/* Theme Toggle Button */}
-            <button
-              type="button"
-              onClick={toggleTheme}
-              className="flex w-full items-center justify-between rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
-            >
-              <span className="flex items-center gap-2">
-                <span>{theme === 'dark' ? '🌙 暗色模式' : '☀️ 明亮模式'}</span>
-              </span>
-              <span className="rounded-md bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 shadow-2xs dark:bg-slate-700 dark:text-slate-300">
-                切换
-              </span>
-            </button>
-
-            {/* User Profile Card */}
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 p-3 dark:border-slate-800/80 dark:bg-slate-800/50">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300">
-                  {user.email.slice(0, 1).toUpperCase()}
+          {/* Compact Sidebar Footer: User Profile + Theme & Logout */}
+          <div className="shrink-0 pt-2.5 border-t border-slate-200/80 dark:border-slate-800/80">
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 p-2.5 dark:border-slate-800/80 dark:bg-slate-800/50">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300">
+                    {user.email.slice(0, 1).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-xs font-bold text-slate-800 dark:text-slate-200" title={user.email}>
+                      {user.email.split('@')[0]}
+                    </p>
+                    <span className="inline-block rounded bg-slate-200/70 px-1.5 py-0.2 text-[9px] font-mono font-semibold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                      {user.role}
+                    </span>
+                  </div>
                 </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200" title={user.email}>
-                    {user.email}
-                  </p>
-                  <span className="mt-0.5 inline-block rounded bg-slate-200/70 px-1.5 py-0.2 text-[10px] font-mono font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                    {user.role}
-                  </span>
-                </div>
-              </div>
 
-              {/* Quick Action Buttons: Change Password & Logout */}
-              <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5 text-xs dark:border-slate-700/60">
-                <button
-                  type="button"
-                  onClick={() => setShowPasswordModal(true)}
-                  className="flex items-center gap-1 font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors cursor-pointer"
-                  title="修改个人登录密码"
-                >
-                  <span>🔑</span> 修改密码
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    localStorage.removeItem('tagmanager-token')
-                    setUser(null)
-                  }}
-                  className="flex items-center gap-1 font-medium text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer"
-                  title="退出当前登录账号"
-                >
-                  <span>🚪</span> 退出
-                </button>
+                {/* Compact Action Buttons: Theme Switcher & Logout */}
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={toggleTheme}
+                    className="flex h-7.5 w-7.5 items-center justify-center rounded-lg border border-slate-200/80 bg-white text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                    title={theme === 'dark' ? '切换为明亮模式' : '切换为暗色模式'}
+                  >
+                    {theme === 'dark' ? '🌙' : '☀️'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      localStorage.removeItem('tagmanager-token')
+                      setUser(null)
+                    }}
+                    className="flex h-7.5 w-7.5 items-center justify-center rounded-lg border border-rose-200/80 bg-rose-50 text-xs text-rose-600 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400 dark:hover:bg-rose-900/60 transition-colors cursor-pointer"
+                    title="退出当前登录账号"
+                  >
+                    🚪
+                  </button>
+                </div>
               </div>
             </div>
           </div>
