@@ -116,104 +116,104 @@ export function App() {
   ]
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 transition-colors duration-200">
-      {/* Fixed Left Sidebar */}
-      <aside className="fixed left-0 top-0 bottom-0 z-30 flex w-64 flex-col justify-between border-r border-slate-200/80 bg-white/90 p-4 shadow-xs backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/90 select-none">
-        <div className="space-y-6">
-          {/* Brand Logo & Subtitle */}
-          <div className="flex items-center gap-3 px-2 pt-2">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-brand to-indigo-600 font-bold text-white shadow-md shadow-brand/20">
-              🏷️
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white">TagManager</h1>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">LLM 智能归并与治理平台</p>
-            </div>
-          </div>
-
-          {/* Navigation Items */}
-          <nav className="space-y-1">
-            {menuItems.map(item => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === '/'}
-                className={({ isActive }) =>
-                  `flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
-                    isActive
-                      ? 'bg-brand text-white shadow-sm shadow-brand/30 font-semibold'
-                      : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-100'
-                  }`
-                }
-              >
-                <span className="text-base">{item.icon}</span>
-                <span>{item.label}</span>
-              </NavLink>
-            ))}
-          </nav>
-        </div>
-
-        {/* Sidebar Footer: Theme Toggle & User Panel */}
-        <div className="space-y-3 pt-4 border-t border-slate-200/80 dark:border-slate-800/80">
-          {/* Theme Toggle Button */}
-          <button
-            type="button"
-            onClick={toggleTheme}
-            className="flex w-full items-center justify-between rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
-          >
-            <span className="flex items-center gap-2">
-              <span>{theme === 'dark' ? '🌙 暗色模式' : '☀️ 明亮模式'}</span>
-            </span>
-            <span className="rounded-md bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 shadow-2xs dark:bg-slate-700 dark:text-slate-300">
-              切换
-            </span>
-          </button>
-
-          {/* User Profile Card */}
-          <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 p-3 dark:border-slate-800/80 dark:bg-slate-800/50">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300">
-                {user.email.slice(0, 1).toUpperCase()}
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 p-4 sm:p-5 transition-colors duration-200">
+      <div className="mx-auto flex max-w-[1600px] gap-5 items-start">
+        {/* Floating Left Sidebar Card */}
+        <aside className="sticky top-5 h-[calc(100vh-2.5rem)] w-64 shrink-0 flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800/80 dark:bg-slate-900 select-none">
+          <div className="space-y-6">
+            {/* Brand Logo & Subtitle */}
+            <div className="flex items-center gap-3 px-2 pt-2">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-brand to-indigo-600 font-bold text-white shadow-md shadow-brand/20">
+                🏷️
               </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200" title={user.email}>
-                  {user.email}
-                </p>
-                <span className="mt-0.5 inline-block rounded bg-slate-200/70 px-1.5 py-0.2 text-[10px] font-mono font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                  {user.role}
-                </span>
+              <div className="min-w-0">
+                <h1 className="text-base font-extrabold tracking-tight text-slate-900 dark:text-white">TagManager</h1>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">LLM 智能归并与治理平台</p>
               </div>
             </div>
 
-            {/* Quick Action Buttons: Change Password & Logout */}
-            <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5 text-xs dark:border-slate-700/60">
-              <button
-                type="button"
-                onClick={() => setShowPasswordModal(true)}
-                className="flex items-center gap-1 font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors cursor-pointer"
-                title="修改个人登录密码"
-              >
-                <span>🔑</span> 修改密码
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  localStorage.removeItem('tagmanager-token')
-                  setUser(null)
-                }}
-                className="flex items-center gap-1 font-medium text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer"
-                title="退出当前登录账号"
-              >
-                <span>🚪</span> 退出
-              </button>
+            {/* Navigation Items */}
+            <nav className="space-y-1">
+              {menuItems.map(item => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.to === '/'}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2.5 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 ${
+                      isActive
+                        ? 'bg-brand text-white shadow-sm shadow-brand/30 font-semibold'
+                        : 'text-slate-600 hover:bg-slate-100/80 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-slate-100'
+                    }`
+                  }
+                >
+                  <span className="text-base">{item.icon}</span>
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </nav>
+          </div>
+
+          {/* Sidebar Footer: Theme Toggle & User Panel */}
+          <div className="space-y-3 pt-4 border-t border-slate-200/80 dark:border-slate-800/80">
+            {/* Theme Toggle Button */}
+            <button
+              type="button"
+              onClick={toggleTheme}
+              className="flex w-full items-center justify-between rounded-xl border border-slate-200/80 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-300 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              <span className="flex items-center gap-2">
+                <span>{theme === 'dark' ? '🌙 暗色模式' : '☀️ 明亮模式'}</span>
+              </span>
+              <span className="rounded-md bg-white px-2 py-0.5 text-[10px] font-bold text-slate-500 shadow-2xs dark:bg-slate-700 dark:text-slate-300">
+                切换
+              </span>
+            </button>
+
+            {/* User Profile Card */}
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 p-3 dark:border-slate-800/80 dark:bg-slate-800/50">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300">
+                  {user.email.slice(0, 1).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-slate-800 dark:text-slate-200" title={user.email}>
+                    {user.email}
+                  </p>
+                  <span className="mt-0.5 inline-block rounded bg-slate-200/70 px-1.5 py-0.2 text-[10px] font-mono font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                    {user.role}
+                  </span>
+                </div>
+              </div>
+
+              {/* Quick Action Buttons: Change Password & Logout */}
+              <div className="mt-3 flex items-center justify-between gap-2 border-t border-slate-200/60 pt-2.5 text-xs dark:border-slate-700/60">
+                <button
+                  type="button"
+                  onClick={() => setShowPasswordModal(true)}
+                  className="flex items-center gap-1 font-medium text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 transition-colors cursor-pointer"
+                  title="修改个人登录密码"
+                >
+                  <span>🔑</span> 修改密码
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    localStorage.removeItem('tagmanager-token')
+                    setUser(null)
+                  }}
+                  className="flex items-center gap-1 font-medium text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer"
+                  title="退出当前登录账号"
+                >
+                  <span>🚪</span> 退出
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      </aside>
+        </aside>
 
-      {/* Main Content Viewport */}
-      <div className="ml-64 min-h-screen p-6 sm:p-8">
-        <main className="mx-auto max-w-7xl">
+        {/* Floating Main Content Card */}
+        <main className="min-w-0 flex-1 min-h-[calc(100vh-2.5rem)] rounded-2xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm dark:border-slate-800/80 dark:bg-slate-900/90">
           <Routes>
             <Route path="/" element={<Dashboard isAdmin={user.role === 'admin'} />} />
             <Route path="/tags" element={<TagsPage />} />
