@@ -96,7 +96,7 @@ export function App() {
     api.me().then(setUser).catch(() => localStorage.removeItem('tagmanager-token')).finally(() => setLoading(false))
   }, [])
 
-  if (loading) return <div className="grid min-h-screen place-items-center text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-950">正在载入控制台…</div>
+  if (loading) return <div className="grid min-h-screen place-items-center text-slate-500 dark:text-slate-400">正在载入控制台…</div>
   if (!user) return <Login onLogin={setUser} />
 
   const menuItems = [
@@ -116,10 +116,10 @@ export function App() {
   ]
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-950 text-slate-900 dark:text-slate-100 p-4 sm:p-5 transition-colors duration-200">
+    <div className="min-h-screen text-slate-800 dark:text-slate-100 p-4 sm:p-6 transition-colors duration-200">
       <div className="mx-auto flex max-w-[1600px] gap-5 items-start">
         {/* Floating Left Sidebar Card */}
-        <aside className="sticky top-5 h-[calc(100vh-2.5rem)] max-h-[calc(100vh-2.5rem)] w-64 shrink-0 flex flex-col justify-between rounded-2xl border border-slate-200/80 bg-white p-4 shadow-sm dark:border-slate-800/80 dark:bg-slate-900 select-none overflow-hidden">
+        <aside className="sticky top-5 h-[calc(100vh-2.5rem)] max-h-[calc(100vh-2.5rem)] w-64 shrink-0 flex flex-col justify-between rounded-2xl glass-panel p-4 select-none overflow-hidden">
           <div className="flex flex-col min-h-0 flex-1 space-y-4">
             {/* Brand Logo & Subtitle */}
             <div className="flex items-center gap-3 px-2 pt-2 shrink-0">
@@ -155,8 +155,8 @@ export function App() {
           </div>
 
           {/* Compact Sidebar Footer: User Profile + Theme & Logout */}
-          <div className="shrink-0 pt-2.5 border-t border-slate-200/80 dark:border-slate-800/80">
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 p-2.5 dark:border-slate-800/80 dark:bg-slate-800/50">
+          <div className="shrink-0 pt-2.5 border-t border-white/40 dark:border-white/10">
+            <div className="rounded-xl glass-soft p-2.5">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-100 text-xs font-extrabold text-indigo-700 dark:bg-indigo-950/80 dark:text-indigo-300">
@@ -177,7 +177,7 @@ export function App() {
                   <button
                     type="button"
                     onClick={toggleTheme}
-                    className="flex h-7.5 w-7.5 items-center justify-center rounded-lg border border-slate-200/80 bg-white text-xs text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg glass-soft text-xs text-slate-700 hover:text-slate-900 dark:text-slate-200 dark:hover:text-white transition-colors cursor-pointer"
                     title={theme === 'dark' ? '切换为明亮模式' : '切换为暗色模式'}
                   >
                     {theme === 'dark' ? '🌙' : '☀️'}
@@ -188,7 +188,7 @@ export function App() {
                       localStorage.removeItem('tagmanager-token')
                       setUser(null)
                     }}
-                    className="flex h-7.5 w-7.5 items-center justify-center rounded-lg border border-rose-200/80 bg-rose-50 text-xs text-rose-600 hover:bg-rose-100 dark:border-rose-900/60 dark:bg-rose-950/60 dark:text-rose-400 dark:hover:bg-rose-900/60 transition-colors cursor-pointer"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg glass-soft text-xs text-rose-600 hover:text-rose-700 dark:text-rose-400 dark:hover:text-rose-300 transition-colors cursor-pointer"
                     title="退出当前登录账号"
                   >
                     🚪
@@ -200,7 +200,7 @@ export function App() {
         </aside>
 
         {/* Floating Main Content Card */}
-        <main className="min-w-0 flex-1 min-h-[calc(100vh-2.5rem)] rounded-2xl border border-slate-200/80 bg-white p-6 sm:p-8 shadow-sm dark:border-slate-800/80 dark:bg-slate-900/90">
+        <main className="min-w-0 flex-1 min-h-[calc(100vh-2.5rem)] rounded-2xl glass-panel p-6 sm:p-8">
           <Routes>
             <Route path="/" element={<Dashboard isAdmin={user.role === 'admin'} />} />
             <Route path="/tags" element={<TagsPage />} />
@@ -239,10 +239,10 @@ function Login({ onLogin }: { onLogin: (user: User) => void }) {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center bg-slate-950 p-5">
-      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl">
-        <h1 className="text-2xl font-bold">标签管理库</h1>
-        <p className="mt-2 text-sm text-slate-500">使用账号进入控制台。</p>
+    <div className="grid min-h-screen place-items-center p-5">
+      <form onSubmit={submit} className="w-full max-w-sm rounded-2xl glass-panel p-7">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">标签管理库</h1>
+        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">使用账号进入控制台。</p>
         <label className="mt-6 block text-sm font-medium">
           邮箱
           <input className={`mt-1 ${inputClass}`} value={email} onChange={e => setEmail(e.target.value)} />
@@ -278,9 +278,9 @@ function ChangePasswordModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-        <h2 className="text-xl font-bold">修改当前账号密码</h2>
+    <div className="fixed inset-0 z-50 grid place-items-center glass-overlay p-4">
+      <div className="w-full max-w-md rounded-2xl glass-panel p-6">
+        <h2 className="text-xl font-bold text-slate-900 dark:text-white">修改当前账号密码</h2>
         <form onSubmit={submit} className="mt-4 space-y-4">
           <Field label="原密码">
             <input type="password" required className={inputClass} value={oldPassword} onChange={e => setOldPassword(e.target.value)} />
@@ -485,7 +485,7 @@ function UsersPage() {
 
       <TableShell>
         <table className="w-full min-w-[640px] text-left text-sm">
-          <thead className="bg-slate-50 text-slate-500">
+          <thead className="bg-slate-100/70 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
             <tr>
               <th className="p-3 font-medium">邮箱</th>
               <th className="p-3 font-medium">角色</th>
@@ -590,7 +590,7 @@ function TagsPage() {
       <div className="mt-5">
         <TableShell>
           <table className="w-full min-w-[560px] text-left text-sm">
-            <thead className="bg-slate-50 text-slate-500">
+            <thead className="bg-slate-100/70 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
               <tr>
                 <th className="p-3 font-medium">规范标签</th>
                 <th className="p-3 font-medium">别名</th>
@@ -683,13 +683,13 @@ function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
       {error && <Notice message={error} />}
 
       {response && (
-        <div className="mt-4 space-y-3 border-t border-slate-100 pt-3 text-xs">
+        <div className="mt-4 space-y-3 border-t border-white/40 dark:border-white/10 pt-3 text-xs">
           <div className="flex items-center gap-3">
-            <span className="font-semibold text-slate-700">API 返回结果:</span>
-            <span className="rounded bg-emerald-100 px-2 py-0.5 font-semibold text-emerald-800 tabular-nums">
+            <span className="font-semibold text-slate-700 dark:text-slate-200">API 返回结果:</span>
+            <span className="rounded bg-emerald-100/80 px-2 py-0.5 font-semibold text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300 tabular-nums">
               命中 ({response.hitCount})
             </span>
-            <span className="rounded bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 tabular-nums">
+            <span className="rounded bg-amber-100/80 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 tabular-nums">
               未命中/已自动入池 ({response.missCount})
             </span>
           </div>
@@ -699,11 +699,11 @@ function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
               <div
                 key={idx}
                 className={`rounded-lg border p-3 ${
-                  res.hit ? 'border-emerald-200 bg-emerald-50/50' : 'border-amber-200 bg-amber-50/50'
+                  res.hit ? 'border-emerald-200/80 bg-emerald-50/50 dark:border-emerald-900/60 dark:bg-emerald-950/40' : 'border-amber-200/80 bg-amber-50/50 dark:border-amber-900/60 dark:bg-amber-950/40'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 font-medium">
-                  <span className="text-slate-900 font-semibold">{res.rawTag}</span>
+                  <span className="text-slate-900 font-semibold dark:text-slate-100">{res.rawTag}</span>
                   {res.hit ? (
                     <span className="rounded bg-emerald-600 px-2 py-0.5 text-[11px] text-white font-semibold">
                       HIT (命中{res.matchedAs === 'alias' ? '别名' : '主标签'})
@@ -715,13 +715,13 @@ function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
                   )}
                 </div>
                 {res.hit && res.canonicalTag && (
-                  <div className="mt-2 space-y-1 text-slate-700">
-                    <p><span className="text-slate-500">主规范名:</span> <strong className="text-emerald-800">{res.canonicalTag.canonicalName}</strong></p>
-                    {res.canonicalTag.description && <p className="text-slate-500 line-clamp-1">{res.canonicalTag.description}</p>}
+                  <div className="mt-2 space-y-1 text-slate-700 dark:text-slate-300">
+                    <p><span className="text-slate-500 dark:text-slate-400">主规范名:</span> <strong className="text-emerald-800 dark:text-emerald-300">{res.canonicalTag.canonicalName}</strong></p>
+                    {res.canonicalTag.description && <p className="text-slate-500 line-clamp-1 dark:text-slate-400">{res.canonicalTag.description}</p>}
                   </div>
                 )}
                 {!res.hit && (
-                  <p className="mt-2 text-amber-800 leading-relaxed">{res.message}</p>
+                  <p className="mt-2 text-amber-800 leading-relaxed dark:text-amber-300">{res.message}</p>
                 )}
               </div>
             ))}
@@ -961,7 +961,7 @@ function PoolPage({ canTrigger }: { canTrigger: boolean }) {
 
           <TableShell>
             <table className="w-full min-w-[560px] text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500">
+              <thead className="bg-slate-100/70 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
                 <tr>
                   <th className="p-3 font-medium">规范化值</th>
                   <th className="p-3 font-medium">原始样本</th>
@@ -994,7 +994,7 @@ function PoolPage({ canTrigger }: { canTrigger: boolean }) {
             ) : (
               <TableShell>
                 <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead className="bg-slate-50 text-slate-500">
+                  <thead className="bg-slate-100/70 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
                     <tr>
                       <th className="p-3 font-medium">时间</th>
                       <th className="p-3 font-medium">类型</th>
@@ -1295,7 +1295,7 @@ function ReviewPage() {
         ) : (
           <TableShell>
             <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500">
+              <thead className="bg-slate-100/70 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
                 <tr>
                   <th className="p-3 font-medium">提案</th>
                   <th className="p-3 font-medium">状态</th>
@@ -1896,7 +1896,7 @@ function ProposalModal({
                           activeAliasList.map(alias => (
                             <span
                               key={alias}
-                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-800 shadow-2xs"
+                              className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-medium text-slate-800 shadow-sm"
                             >
                               <span>{alias}</span>
                               {!readonly && (
@@ -2286,7 +2286,7 @@ print(data)`,
         ) : (
           <TableShell>
             <table className="w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-500">
+              <thead className="bg-slate-100/70 text-slate-500 dark:bg-slate-800/50 dark:text-slate-400">
                 <tr>
                   <th className="p-3 font-medium">Key 名称</th>
                   <th className="p-3 font-medium">Key 前缀</th>
@@ -2685,7 +2685,7 @@ function SettingsPage() {
         {/* Card 1: 账号安全与密码设置 */}
         <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
           {/* Card Header */}
-          <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800/80">
             <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
@@ -2706,7 +2706,7 @@ function SettingsPage() {
               </div>
             </div>
             {/* Right Circle Icon */}
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-base text-slate-600 dark:bg-slate-800 dark:text-slate-300 shadow-2xs">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-base text-slate-600 dark:bg-slate-800 dark:text-slate-300 shadow-sm">
               👤
             </div>
           </div>
@@ -2829,7 +2829,7 @@ function SettingsPage() {
         {/* Card 2: 大模型与 AI 助审服务配置 (Consolidated LLM & AI Audit Copilot Card) */}
         <section className="rounded-2xl border border-slate-200/80 bg-white shadow-sm transition-all duration-200 dark:border-slate-800/80 dark:bg-slate-900">
           {/* Parent Card Header */}
-          <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 dark:border-slate-800/80">
+          <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 dark:border-slate-800/80">
             <div className="flex items-center gap-3 min-w-0">
               <button
                 type="button"
@@ -2850,7 +2850,7 @@ function SettingsPage() {
               </div>
             </div>
             {/* Right Circle Icon */}
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-base text-brand dark:bg-brand/20 shadow-2xs">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-indigo-50 text-base text-brand dark:bg-brand/20 shadow-sm">
               🤖
             </div>
           </div>
