@@ -60,3 +60,5 @@ export interface FetchModelsRequest { baseUrl: string; apiKey: string }
 export interface FetchModelsResponse { models: string[] }
 export interface TestLLMRequest { baseUrl: string; apiKey: string; model: string }
 export interface TestLLMResponse { success: boolean; latencyMs: number; message: string }
+export interface ExtractAndMatchRequest { namespaceId: string; text: string; sourceName?: string }
+export interface ExtractAndMatchResponse { namespaceId: string; originalText: string; extractedTag: string; reasoning: string; matchResult: TagMatchItemResult }

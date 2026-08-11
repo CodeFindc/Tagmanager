@@ -20,4 +20,5 @@ type InputEntry struct {
 
 type Client interface {
 	Consolidate(context.Context, ConsolidationRequest) (domain.ConsolidationOutput, error)
+	ExtractTagFromText(context.Context, domain.ExtractTagRequest) (domain.ExtractTagResponse, error)
 }

@@ -783,3 +783,112 @@ func (c *OpenAICompatibleClient) TestConnection(ctx context.Context, cfg domain.
 	}
 	return latency, nil
 }
+
+func (c *OpenAICompatibleClient) ExtractTagFromText(ctx context.Context, req domain.ExtractTagRequest) (domain.ExtractTagResponse, error) {
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		return domain.ExtractTagResponse{}, fmt.Errorf("文本内容不能为空")
+	}
+
+	nsName := req.NamespaceName
+	if nsName == "" {
+		nsName = "通用业务标签域"
+	}
+
+	if c.baseURL == "" || c.apiKey == "" || c.model == "" {
+		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 模型未配置，请先进入【设置中心】配置 Base URL、API Key 与 Model 名称")
+	}
+
+	sysPrompt := "你是一名企业级标签体系归纳与特征抽取专家。"
+	userPrompt := fmt.Sprintf(`当前所属标签业务域：%s。
+你的任务是：深入分析下方给出的详细事件事情描述大段文本，抽取并归纳出一个最简练、精准、标准化的规范标签短语（例如“违规空域无人机黑飞”、“自行车与机动车碰撞”等，控制在 15 个字以内）。
+
+事件文本描述：
+%s
+
+请严格按照 JSON 格式返回 JSON 对象，不要包含 markdown 标记或除 JSON 以外的任何文字：
+{"extractedTag": "提取出的规范标签短语", "reasoning": "简要提取理由与核心特征归纳"}`, nsName, text)
+
+	type openAIMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type openAIRequest struct {
+		Model       string          `json:"model"`
+		Temperature float64         `json:"temperature"`
+		Messages    []openAIMessage `json:"messages"`
+	}
+
+	reqBody := openAIRequest{
+		Model:       c.model,
+		Temperature: 0.1,
+		Messages: []openAIMessage{
+			{Role: "system", Content: sysPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return domain.ExtractTagResponse{}, err
+	}
+
+	url := strings.TrimRight(c.baseURL, "/") + "/chat/completions"
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return domain.ExtractTagResponse{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.client.Do(httpReq)
+	if err != nil {
+		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 接口请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 返回 HTTP 状态 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
+	}
+
+	var chatResp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
+		return domain.ExtractTagResponse{}, fmt.Errorf("解析 LLM 响应失败: %w", err)
+	}
+
+	if len(chatResp.Choices) == 0 {
+		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 未返回有效回答")
+	}
+
+	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	if strings.HasPrefix(rawContent, "```json") {
+		rawContent = strings.TrimPrefix(rawContent, "```json")
+		rawContent = strings.TrimSuffix(rawContent, "```")
+	} else if strings.HasPrefix(rawContent, "```") {
+		rawContent = strings.TrimPrefix(rawContent, "```")
+		rawContent = strings.TrimSuffix(rawContent, "```")
+	}
+	rawContent = strings.TrimSpace(rawContent)
+
+	var result domain.ExtractTagResponse
+	if err := json.Unmarshal([]byte(rawContent), &result); err != nil {
+		result.ExtractedTag = rawContent
+		result.Reasoning = "大模型事件描述直接归纳提取"
+	}
+
+	result.ExtractedTag = strings.TrimSpace(result.ExtractedTag)
+	result.Reasoning = strings.TrimSpace(result.Reasoning)
+	if result.ExtractedTag == "" {
+		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 未能成功抽取有效的标签")
+	}
+
+	return result, nil
+}

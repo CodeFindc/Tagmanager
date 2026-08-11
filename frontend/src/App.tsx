@@ -1,7 +1,7 @@
 import { Component, ErrorInfo, FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
-import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ImportResult, LLMServiceConfig, Namespace, PoolEntry, Proposal, ProposalTag, Role, SystemSettingsPayload, Tag, TagAIAdvice, TagMatchItemResult, TagMatchResponse, User } from './types/api'
+import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ExtractAndMatchRequest, ExtractAndMatchResponse, ImportResult, LLMServiceConfig, Namespace, PoolEntry, Proposal, ProposalTag, Role, SystemSettingsPayload, Tag, TagAIAdvice, TagMatchItemResult, TagMatchResponse, User } from './types/api'
 import {
   EmptyState,
   Field,
@@ -902,10 +902,13 @@ function TagsPage() {
 }
 
 function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
+  const [mode, setMode] = useState<'direct' | 'ai_text'>('direct')
   const [inputTags, setInputTags] = useState('')
+  const [eventText, setEventText] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [response, setResponse] = useState<TagMatchResponse | null>(null)
+  const [aiResponse, setAiResponse] = useState<ExtractAndMatchResponse | null>(null)
 
   const handleMatch = async (e: FormEvent) => {
     e.preventDefault()
@@ -913,43 +916,94 @@ function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
       setError('请先在上方选择标签域')
       return
     }
-    const tags = inputTags.split(/[,，\n]/).map(s => s.trim()).filter(Boolean)
-    if (tags.length === 0) {
-      setError('请输入至少一个要比对的标签')
-      return
-    }
     setError('')
+    setResponse(null)
+    setAiResponse(null)
     setBusy(true)
+
     try {
-      const res = await api.matchTags({ namespaceId, tags, sourceName: 'console_simulator' })
-      setResponse(res)
+      if (mode === 'direct') {
+        const tags = inputTags.split(/[,，\n]/).map(s => s.trim()).filter(Boolean)
+        if (tags.length === 0) {
+          setError('请输入至少一个要比对的标签')
+          setBusy(false)
+          return
+        }
+        const res = await api.matchTags({ namespaceId, tags, sourceName: 'console_simulator' })
+        setResponse(res)
+      } else {
+        const text = eventText.trim()
+        if (!text) {
+          setError('请输入事件事情描述大段文本')
+          setBusy(false)
+          return
+        }
+        const res = await api.extractAndMatchTag({ namespaceId, text, sourceName: 'console_simulator_aitext' })
+        setAiResponse(res)
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '匹配请求失败')
+      setError(err instanceof Error ? err.message : '请求处理失败')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <Panel title="第三方 API 实时匹配测试器 (Tag Match Simulator)">
+    <Panel
+      title="第三方 API 实时匹配与 AI 事件文本提取测试器"
+      actions={
+        <div className="flex rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
+          <button
+            type="button"
+            onClick={() => setMode('direct')}
+            className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+              mode === 'direct' ? 'bg-white shadow text-slate-900 dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+            }`}
+          >
+            直接标签比对
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('ai_text')}
+            className={`rounded-md px-3 py-1 text-xs font-medium transition-all ${
+              mode === 'ai_text' ? 'bg-white shadow text-slate-900 dark:bg-slate-700 dark:text-white' : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+            }`}
+          >
+            🤖 大模型事件文本提取
+          </button>
+        </div>
+      }
+    >
       <form onSubmit={handleMatch} className="space-y-3">
-        <Field label="输入第三方不规范标签 (逗号或换行分隔)">
-          <textarea
-            className={`${inputClass} min-h-16 text-xs`}
-            placeholder="例如: 自行车与机动车碰撞, 违规空域无人机黑飞"
-            value={inputTags}
-            onChange={e => setInputTags(e.target.value)}
-          />
-        </Field>
+        {mode === 'direct' ? (
+          <Field label="输入第三方不规范标签 (逗号或换行分隔)">
+            <textarea
+              className={`${inputClass} min-h-16 text-xs`}
+              placeholder="例如: 自行车与机动车碰撞, 违规空域无人机黑飞"
+              value={inputTags}
+              onChange={e => setInputTags(e.target.value)}
+            />
+          </Field>
+        ) : (
+          <Field label="输入事件/事情大段文本描述 (由大模型提取标签并走候选池流程)">
+            <textarea
+              className={`${inputClass} min-h-24 text-xs`}
+              placeholder="例如：发生在某某主干道路口的电动自行车与机动车擦碰事件，导致交通拥堵，责任认定正在排查中..."
+              value={eventText}
+              onChange={e => setEventText(e.target.value)}
+            />
+          </Field>
+        )}
         <div className="flex justify-end">
           <button type="submit" disabled={busy || !namespaceId} className={btnPrimary}>
-            {busy ? '匹配比对中…' : '发起 API 实时匹配测试'}
+            {busy ? (mode === 'direct' ? '匹配比对中…' : '🤖 AI 抽取标签中…') : mode === 'direct' ? '发起 API 实时匹配测试' : '🤖 提取标签并入池比对'}
           </button>
         </div>
       </form>
 
       {error && <Notice message={error} />}
 
+      {/* 模式一：直接标签比对返回结果 */}
       {response && (
         <div className="mt-4 space-y-3 border-t border-white/40 dark:border-white/10 pt-3 text-xs">
           <div className="flex items-center gap-3">
@@ -993,6 +1047,60 @@ function TagMatchSimulator({ namespaceId }: { namespaceId: string }) {
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* 模式二：大模型事件文本提取返回结果 */}
+      {aiResponse && (
+        <div className="mt-4 space-y-3 border-t border-slate-200 dark:border-slate-800 pt-3 text-xs">
+          <div className="rounded-xl border border-brand/30 bg-brand/5 p-4 space-y-2 dark:bg-brand/10">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-900 dark:text-white text-sm">🤖 1. 大模型提取规范标签短语:</span>
+              <span className="rounded-full bg-brand/10 px-2.5 py-0.5 font-semibold text-brand text-xs">AI Extraction Completed</span>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-slate-500">归纳短语:</span>
+              <span className="text-base font-extrabold text-brand font-mono">{aiResponse.extractedTag}</span>
+            </div>
+            {aiResponse.reasoning && (
+              <p className="text-slate-600 dark:text-slate-300 text-xs">
+                <strong>归纳理由:</strong> {aiResponse.reasoning}
+              </p>
+            )}
+          </div>
+
+          <div className="rounded-xl border p-4 space-y-2 bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-900 dark:text-white text-sm">🔄 2. 候选池匹配与自动入池状态:</span>
+              {aiResponse.matchResult.hit ? (
+                <span className="rounded bg-emerald-600 px-2.5 py-0.5 text-xs text-white font-semibold">
+                  HIT 命中 (匹配到已有规范标签)
+                </span>
+              ) : (
+                <span className="rounded bg-amber-600 px-2.5 py-0.5 text-xs text-white font-semibold">
+                  MISS 未命中 (已自动收集入候选词池)
+                </span>
+              )}
+            </div>
+
+            {aiResponse.matchResult.hit && aiResponse.matchResult.canonicalTag && (
+              <div className="mt-2 rounded-lg bg-emerald-50 border border-emerald-200 p-3 dark:bg-emerald-950/40 dark:border-emerald-900">
+                <p className="text-emerald-950 dark:text-emerald-200">
+                  成功归并匹配至已有规范标签：<strong>{aiResponse.matchResult.canonicalTag.canonicalName}</strong>（{aiResponse.matchResult.matchedAs === 'alias' ? '命中别名' : '命主标签'}）
+                </p>
+                {aiResponse.matchResult.canonicalTag.description && (
+                  <p className="mt-1 text-slate-600 dark:text-slate-400">{aiResponse.matchResult.canonicalTag.description}</p>
+                )}
+              </div>
+            )}
+
+            {!aiResponse.matchResult.hit && (
+              <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 p-3 dark:bg-amber-950/40 dark:border-amber-900">
+                <p className="text-amber-900 font-medium dark:text-amber-300">{aiResponse.matchResult.message}</p>
+                <p className="mt-1 text-slate-500">已将 extractedTag「{aiResponse.extractedTag}」入库累计频次。当累计达到标签域阈值时，系统将自动触发大模型批次归并任务。</p>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2692,6 +2800,49 @@ print(data)`,
       "message": "未匹配到规范标签，已自动收集入候选词池，建议先跳过此数据"
     }
   ]
+}`}
+            </pre>
+          </div>
+        </div>
+      </Panel>
+
+      {/* 🤖 大模型事件文本提取 API 接入文档 */}
+      <Panel title="🤖 AI 事件文本提取与自动入池 API (POST /api/v1/tags/extract-and-match)">
+        <div className="space-y-4 text-xs text-slate-700 leading-relaxed dark:text-slate-300">
+          <div className="rounded-lg bg-brand/5 border border-brand/20 p-3 space-y-2 dark:bg-brand/10">
+            <div className="flex items-center gap-2">
+              <span className="rounded bg-brand px-2 py-0.5 text-xs font-bold text-white">POST</span>
+              <code className="font-mono text-slate-900 font-semibold dark:text-white">{exampleEndpoint.replace('/tags/match', '/tags/extract-and-match')}</code>
+            </div>
+            <p className="text-slate-600 dark:text-slate-300">
+              用于第三方系统直接传入大段事件/事情描述文本（如工单记录、事故通报长文本）。接口将首先调用大模型提取归纳出标准的规范标签短语，随后无缝进入现有的比对排重与候选池自动收录逻辑。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="font-semibold text-slate-900 dark:text-slate-100">请求参数 (JSON Body)</h4>
+            <div className="rounded-lg bg-slate-50 border p-3 font-mono text-[11px] text-slate-800 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-200">
+{`{
+  "namespaceId": "YOUR_NAMESPACE_ID", // [必填] 标签域 ID
+  "text": "发生在某某干道路口的电动自行车与机动车擦碰事件，导致交通拥堵，责任认定正在排查中...", // [必填] 大段事件描述文本
+  "sourceName": "event_log_importer" // [可选] 来源标识
+}`}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <h4 className="font-semibold text-slate-900 dark:text-slate-100">响应 Schema 结构示例</h4>
+            <pre className="overflow-x-auto rounded-lg bg-slate-900 p-3 font-mono text-[11px] text-slate-100 leading-relaxed">
+{`{
+  "namespaceId": "YOUR_NAMESPACE_ID",
+  "originalText": "发生在某某干道路口的电动自行车与机动车擦碰事件...",
+  "extractedTag": "电动车与机动车擦碰", // AI 从大段文本中提取出的规范标签短语
+  "reasoning": "从事件描述中归纳出的关键碰撞特征与交通事由",
+  "matchResult": {
+    "rawTag": "电动车与机动车擦碰",
+    "hit": false, // true 时包含 canonicalTag
+    "message": "未匹配到规范标签，已自动收集入候选词池，建议先跳过此数据"
+  }
 }`}
             </pre>
           </div>

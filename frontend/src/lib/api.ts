@@ -1,4 +1,4 @@
-import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, FetchModelsRequest, FetchModelsResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, SystemSettingsPayload, Tag, TagAIAdvice, TagMatchRequest, TagMatchResponse, TestLLMRequest, TestLLMResponse, User } from '../types/api'
+import type { AIAuditConfig, AIAuditEvaluateResponse, APIKey, ConsolidationJob, ConsolidationTriggerResult, CreateAPIKeyResponse, ExtractAndMatchRequest, ExtractAndMatchResponse, FetchModelsRequest, FetchModelsResponse, ImportResult, Namespace, PoolEntry, Proposal, Role, SystemSettingsPayload, Tag, TagAIAdvice, TagMatchRequest, TagMatchResponse, TestLLMRequest, TestLLMResponse, User } from '../types/api'
 
 const baseURL = import.meta.env.VITE_API_BASE_URL ?? '/api/v1'
 
@@ -133,6 +133,7 @@ export const api = {
   createUser: (payload: { email: string; password?: string; role: Role }) => request<{ user: User; initialPassword?: string }>('/users', { method: 'POST', body: JSON.stringify(payload) }),
   updateUserRole: (id: string, role: Role) => request<User>(`/users/${id}/role`, { method: 'PATCH', body: JSON.stringify({ role }) }),
   matchTags: (payload: TagMatchRequest) => request<TagMatchResponse>('/tags/match', { method: 'POST', body: JSON.stringify(payload) }),
+  extractAndMatchTag: (payload: ExtractAndMatchRequest) => request<ExtractAndMatchResponse>('/tags/extract-and-match', { method: 'POST', body: JSON.stringify(payload) }),
   apiKeys: () => request<{ data: APIKey[] }>('/api-keys'),
   createAPIKey: (name: string) => request<CreateAPIKeyResponse>('/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
   revokeAPIKey: (id: string) => request<{ status: string }>(`/api-keys/${id}/revoke`, { method: 'POST' }),

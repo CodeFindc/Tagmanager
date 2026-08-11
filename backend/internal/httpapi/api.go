@@ -56,6 +56,7 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Put("/namespaces/{id}", api.require(domain.RoleAdmin, api.updateNamespace))
 			r.Get("/tags", api.listTags)
 			r.Post("/tags/match", api.matchTags)
+			r.Post("/tags/extract-and-match", api.extractAndMatchTag)
 			r.Get("/candidate-pools/{namespaceID}/entries", api.listPool)
 			r.Post("/candidate-pools/{namespaceID}/consolidate", api.require(domain.RoleAdmin, api.triggerConsolidation))
 			r.Get("/consolidation-jobs", api.listConsolidationJobs)
@@ -467,6 +468,72 @@ func (a *API) matchTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, res)
+}
+
+func (a *API) extractAndMatchTag(w http.ResponseWriter, r *http.Request) {
+	var body domain.ExtractAndMatchRequest
+	if decode(w, r, &body) != nil {
+		return
+	}
+	body.NamespaceID = strings.TrimSpace(body.NamespaceID)
+	body.Text = strings.TrimSpace(body.Text)
+
+	if body.NamespaceID == "" {
+		respondError(w, http.StatusBadRequest, "namespaceId is required")
+		return
+	}
+	if body.Text == "" {
+		respondError(w, http.StatusBadRequest, "text is required")
+		return
+	}
+
+	namespaces, err := a.store.ListNamespaces(r.Context())
+	if err != nil {
+		respondError(w, 500, err.Error())
+		return
+	}
+	nsName := "默认标签域"
+	for _, ns := range namespaces {
+		if ns.ID == body.NamespaceID {
+			nsName = ns.Name
+			break
+		}
+	}
+
+	// 1. LLM Extract Tag from text
+	extracted, err := a.llmClient.ExtractTagFromText(r.Context(), domain.ExtractTagRequest{
+		NamespaceName: nsName,
+		Text:          body.Text,
+	})
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 2. Run matchTags pipeline on extracted tag
+	actorID := currentUser(r).ID
+	matchRes, err := a.store.MatchTags(r.Context(), domain.TagMatchRequest{
+		NamespaceID: body.NamespaceID,
+		Tag:         extracted.ExtractedTag,
+		SourceName:  body.SourceName,
+	}, actorID, service.NormalizeTag)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var itemResult domain.TagMatchItemResult
+	if len(matchRes.Results) > 0 {
+		itemResult = matchRes.Results[0]
+	}
+
+	respond(w, http.StatusOK, domain.ExtractAndMatchResponse{
+		NamespaceID:  body.NamespaceID,
+		OriginalText: body.Text,
+		ExtractedTag: extracted.ExtractedTag,
+		Reasoning:    extracted.Reasoning,
+		MatchResult:  itemResult,
+	})
 }
 
 func (a *API) listAPIKeys(w http.ResponseWriter, r *http.Request) {

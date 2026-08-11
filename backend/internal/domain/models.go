@@ -231,3 +231,27 @@ type TestLLMResponse struct {
 	LatencyMs int64  `json:"latencyMs"`
 	Message   string `json:"message"`
 }
+
+type ExtractTagRequest struct {
+	NamespaceName string `json:"namespaceName"`
+	Text          string `json:"text"`
+}
+
+type ExtractTagResponse struct {
+	ExtractedTag string `json:"extractedTag"`
+	Reasoning    string `json:"reasoning"`
+}
+
+type ExtractAndMatchRequest struct {
+	NamespaceID string `json:"namespaceId"`
+	Text        string `json:"text"`
+	SourceName  string `json:"sourceName,omitempty"`
+}
+
+type ExtractAndMatchResponse struct {
+	NamespaceID  string             `json:"namespaceId"`
+	OriginalText string             `json:"originalText"`
+	ExtractedTag string             `json:"extractedTag"`
+	Reasoning    string             `json:"reasoning"`
+	MatchResult  TagMatchItemResult `json:"matchResult"`
+}
