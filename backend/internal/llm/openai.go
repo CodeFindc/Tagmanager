@@ -225,6 +225,7 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
 	scanner.Buffer(buf, 2<<20)
 
 	var content strings.Builder
+	var reasoningContent strings.Builder
 	chunks := 0
 	firstTokenAt := time.Time{}
 	lastLogAt := time.Now()
@@ -252,26 +253,40 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
 			c.logger.Debug("llm sse chunk not json", "data", truncate(data, 200))
 			continue
 		}
-		delta := piece.deltaContent()
-		if delta == "" {
+		deltaText, isReasoning := piece.deltaContent()
+		if deltaText == "" {
 			continue
 		}
 		if firstTokenAt.IsZero() {
 			firstTokenAt = time.Now()
 			c.logger.Info("llm first token received",
 				"ttft", firstTokenAt.Sub(started).Round(time.Millisecond).String(),
+				"isReasoning", isReasoning,
 			)
 		}
-		content.WriteString(delta)
+		if isReasoning {
+			reasoningContent.WriteString(deltaText)
+		} else {
+			content.WriteString(deltaText)
+		}
 		chunks++
 
 		if time.Since(lastLogAt) >= 5*time.Second {
-			c.logger.Info("llm stream progress",
-				"chunks", chunks,
-				"contentBytes", content.Len(),
-				"elapsed", time.Since(started).Round(time.Millisecond).String(),
-				"preview", truncate(content.String(), 120),
-			)
+			if content.Len() > 0 {
+				c.logger.Info("llm stream progress",
+					"chunks", chunks,
+					"contentBytes", content.Len(),
+					"elapsed", time.Since(started).Round(time.Millisecond).String(),
+					"preview", truncate(content.String(), 120),
+				)
+			} else if reasoningContent.Len() > 0 {
+				c.logger.Info("llm reasoning progress",
+					"chunks", chunks,
+					"reasoningBytes", reasoningContent.Len(),
+					"elapsed", time.Since(started).Round(time.Millisecond).String(),
+					"preview", truncate(reasoningContent.String(), 120),
+				)
+			}
 			lastLogAt = time.Now()
 		}
 	}
@@ -282,6 +297,9 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
 		return "", fmt.Errorf("read SSE stream: %w", err)
 	}
 	if content.Len() == 0 {
+		if reasoningContent.Len() > 0 {
+			return "", fmt.Errorf("LLM 输出了思考过程但未输出最终 content (%d chunks)", chunks)
+		}
 		return "", fmt.Errorf("LLM stream completed with empty content (%d chunks)", chunks)
 	}
 	c.logger.Info("llm stream finished",
@@ -295,22 +313,34 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
 type streamChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"delta"`
 		Message struct {
-			Content string `json:"content"`
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
 		} `json:"message"`
 	} `json:"choices"`
 }
 
-func (c streamChunk) deltaContent() string {
+func (c streamChunk) deltaContent() (string, bool) {
 	if len(c.Choices) == 0 {
-		return ""
+		return "", false
 	}
-	if c.Choices[0].Delta.Content != "" {
-		return c.Choices[0].Delta.Content
+	ch := c.Choices[0]
+	if ch.Delta.Content != "" {
+		return ch.Delta.Content, false
 	}
-	return c.Choices[0].Message.Content
+	if ch.Message.Content != "" {
+		return ch.Message.Content, false
+	}
+	if ch.Delta.ReasoningContent != "" {
+		return ch.Delta.ReasoningContent, true
+	}
+	if ch.Message.ReasoningContent != "" {
+		return ch.Message.ReasoningContent, true
+	}
+	return "", false
 }
 
 func extractContentFromCompletionJSON(payload []byte) (string, error) {
