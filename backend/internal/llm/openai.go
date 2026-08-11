@@ -54,7 +54,7 @@ func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input Consolid
 	}
 
 	url := c.baseURL + "/chat/completions"
-	body, err := c.buildRequestBody(input, true)
+	body, err := c.buildRequestBody(input, true, true)
 	if err != nil {
 		return domain.ConsolidationOutput{}, err
 	}
@@ -65,20 +65,27 @@ func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input Consolid
 		"entries", len(input.Entries),
 		"timeout", c.client.Timeout.String(),
 		"stream", true,
+		"jsonSchema", true,
 		"payloadBytes", len(body),
 	)
 	started := time.Now()
 
 	content, err := c.doStream(ctx, url, body, len(input.Entries))
 	if err != nil {
-		// Some OpenAI-compatible stacks reject stream+json_schema; fall back once.
-		if isStreamUnsupported(err) {
-			c.logger.Warn("llm streaming unsupported, falling back to non-stream", "error", err)
-			body, err = c.buildRequestBody(input, false)
-			if err != nil {
-				return domain.ConsolidationOutput{}, err
+		// Some OpenAI-compatible stacks hang or fail with stream+json_schema; fall back without strict json_schema.
+		if isStreamOrSchemaUnsupported(err) {
+			c.logger.Warn("llm streaming with strict json_schema failed/timed out, falling back without strict json_schema", "error", err)
+			body, err = c.buildRequestBody(input, true, false)
+			if err == nil {
+				content, err = c.doStream(ctx, url, body, len(input.Entries))
 			}
-			content, err = c.doNonStream(ctx, url, body, len(input.Entries))
+			if err != nil {
+				c.logger.Warn("llm streaming fallback failed, falling back to non-stream", "error", err)
+				body, err = c.buildRequestBody(input, false, false)
+				if err == nil {
+					content, err = c.doNonStream(ctx, url, body, len(input.Entries))
+				}
+			}
 		}
 		if err != nil {
 			return domain.ConsolidationOutput{}, fmt.Errorf("LLM request to %s failed (timeout %s, model %s, %d entries, elapsed %s): %w",
@@ -100,50 +107,52 @@ func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input Consolid
 	return output, nil
 }
 
-func (c *OpenAICompatibleClient) buildRequestBody(input ConsolidationRequest, stream bool) ([]byte, error) {
+func (c *OpenAICompatibleClient) buildRequestBody(input ConsolidationRequest, stream bool, useSchema bool) ([]byte, error) {
 	prompt, err := json.Marshal(input)
 	if err != nil {
 		return nil, err
-	}
-	schema := map[string]any{
-		"type":                 "object",
-		"additionalProperties": false,
-		"properties": map[string]any{
-			"tags": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type":                 "object",
-					"additionalProperties": false,
-					"properties": map[string]any{
-						"canonicalName": map[string]any{"type": "string"},
-						"description":   map[string]any{"type": "string"},
-						"aliases":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-						"coveredIds":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-						"rationale":     map[string]any{"type": "string"},
-						"confidence":    map[string]any{"type": "number"},
-					},
-					"required": []string{"canonicalName", "description", "aliases", "coveredIds", "rationale", "confidence"},
-				},
-			},
-		},
-		"required": []string{"tags"},
 	}
 	body := map[string]any{
 		"model":       c.model,
 		"temperature": 0,
 		"stream":      stream,
-		"response_format": map[string]any{
+		"messages": []map[string]string{
+			{"role": "system", "content": "You consolidate raw business tags into a minimal, reviewable taxonomy increment. You are provided with `existingTags` (already published canonical tag names in this namespace) and `entries` (unresolved raw candidate tags, each having an `id`, `name`, and `occurrences`). CRITICAL: In `coveredIds`, you MUST list the exact `id` strings of all candidate entries in `entries` that are covered or mapped by this proposed tag. Do NOT leave `coveredIds` empty. Every entry `id` from `entries` must appear in exactly one tag's `coveredIds` array. Never invent fake IDs. Prefer mapping candidate entries to existing published tags in `existingTags` as new aliases, or reusing an existing canonicalName, rather than creating redundant new canonical tags whenever an existing tag matches the semantic intent. In `aliases`, include ONLY newly proposed alias names for this batch—do NOT include existing canonical tag names or previously published aliases. Return ONLY valid JSON matching structure: {\"tags\":[{\"canonicalName\":string,\"description\":string,\"aliases\":[string],\"coveredIds\":[string],\"rationale\":string,\"confidence\":number}]}."},
+			{"role": "user", "content": string(prompt)},
+		},
+	}
+	if useSchema {
+		schema := map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties": map[string]any{
+				"tags": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"canonicalName": map[string]any{"type": "string"},
+							"description":   map[string]any{"type": "string"},
+							"aliases":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"coveredIds":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+							"rationale":     map[string]any{"type": "string"},
+							"confidence":    map[string]any{"type": "number"},
+						},
+						"required": []string{"canonicalName", "description", "aliases", "coveredIds", "rationale", "confidence"},
+					},
+				},
+			},
+			"required": []string{"tags"},
+		}
+		body["response_format"] = map[string]any{
 			"type": "json_schema",
 			"json_schema": map[string]any{
 				"name":   "tag_consolidation",
 				"strict": true,
 				"schema": schema,
 			},
-		},
-		"messages": []map[string]string{
-			{"role": "system", "content": "You consolidate raw business tags into a minimal, reviewable taxonomy increment. You are provided with `existingTags` (already published canonical tag names in this namespace) and `entries` (unresolved raw candidate tags, each having an `id`, `name`, and `occurrences`). CRITICAL: In `coveredIds`, you MUST list the exact `id` strings of all candidate entries in `entries` that are covered or mapped by this proposed tag. Do NOT leave `coveredIds` empty. Every entry `id` from `entries` must appear in exactly one tag's `coveredIds` array. Never invent fake IDs. Prefer mapping candidate entries to existing published tags in `existingTags` as new aliases, or reusing an existing canonicalName, rather than creating redundant new canonical tags whenever an existing tag matches the semantic intent. In `aliases`, include ONLY newly proposed alias names for this batch—do NOT include existing canonical tag names or previously published aliases. Return only JSON matching the schema."},
-			{"role": "user", "content": string(prompt)},
-		},
+		}
 	}
 	return json.Marshal(body)
 }
@@ -219,7 +228,8 @@ func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, url string, bo
 }
 
 func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
-	scanner := bufio.NewScanner(body)
+	// Wrap with 90s TTFT timeout so if the LLM guided_decoding/OOM engine hangs on 200 OK headers, we abort & fallback
+	scanner := bufio.NewScanner(newTTFTReader(body, 90*time.Second))
 	// Structured consolidation can emit large single SSE lines.
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2<<20)
@@ -375,17 +385,56 @@ func parseConsolidationContent(content string) (domain.ConsolidationOutput, erro
 	return output, nil
 }
 
-func isStreamUnsupported(err error) bool {
+func isStreamOrSchemaUnsupported(err error) bool {
 	if err == nil {
 		return false
 	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "stream") &&
-		(strings.Contains(msg, "400") ||
-			strings.Contains(msg, "unsupported") ||
-			strings.Contains(msg, "not support") ||
-			strings.Contains(msg, "invalid") ||
-			strings.Contains(msg, "json_schema"))
+	return strings.Contains(msg, "stream") ||
+		strings.Contains(msg, "json_schema") ||
+		strings.Contains(msg, "response_format") ||
+		strings.Contains(msg, "guided_decoding") ||
+		strings.Contains(msg, "grammar") ||
+		strings.Contains(msg, "ttft") ||
+		strings.Contains(msg, "wait first token timeout") ||
+		strings.Contains(msg, "400") ||
+		strings.Contains(msg, "unsupported") ||
+		strings.Contains(msg, "not support") ||
+		strings.Contains(msg, "invalid")
+}
+
+type ttftReader struct {
+	reader       io.Reader
+	ttftTimeout  time.Duration
+	gotFirstByte bool
+}
+
+func newTTFTReader(r io.Reader, timeout time.Duration) *ttftReader {
+	return &ttftReader{reader: r, ttftTimeout: timeout}
+}
+
+func (tr *ttftReader) Read(p []byte) (int, error) {
+	if !tr.gotFirstByte {
+		type readRes struct {
+			n   int
+			err error
+		}
+		ch := make(chan readRes, 1)
+		go func() {
+			n, err := tr.reader.Read(p)
+			ch <- readRes{n, err}
+		}()
+		select {
+		case res := <-ch:
+			if res.n > 0 {
+				tr.gotFirstByte = true
+			}
+			return res.n, res.err
+		case <-time.After(tr.ttftTimeout):
+			return 0, fmt.Errorf("wait first token timeout (TTFT > %v)", tr.ttftTimeout)
+		}
+	}
+	return tr.reader.Read(p)
 }
 
 func truncate(s string, n int) string {
