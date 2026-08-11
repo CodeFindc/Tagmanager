@@ -25,18 +25,23 @@ export function Panel({
   className = '',
   title,
   description,
+  actions,
 }: {
   children: ReactNode
   className?: string
   title?: string
   description?: string
+  actions?: ReactNode
 }) {
   return (
     <div className={`rounded-2xl glass-panel p-5 sm:p-6 ${className}`}>
-      {(title || description) && (
-        <div className="mb-4 space-y-1">
-          {title && <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">{title}</h2>}
-          {description && <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">{description}</p>}
+      {(title || description || actions) && (
+        <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+          <div className="space-y-1">
+            {title && <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">{title}</h2>}
+            {description && <p className="text-xs leading-relaxed text-slate-500 dark:text-slate-400">{description}</p>}
+          </div>
+          {actions && <div>{actions}</div>}
         </div>
       )}
       {children}

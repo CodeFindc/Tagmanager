@@ -53,6 +53,7 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Post("/auth/change-password", api.changePassword)
 			r.Get("/namespaces", api.listNamespaces)
 			r.Post("/namespaces", api.require(domain.RoleAdmin, api.createNamespace))
+			r.Put("/namespaces/{id}", api.require(domain.RoleAdmin, api.updateNamespace))
 			r.Get("/tags", api.listTags)
 			r.Post("/tags/match", api.matchTags)
 			r.Get("/candidate-pools/{namespaceID}/entries", api.listPool)
@@ -66,7 +67,8 @@ func New(store *repository.Store, cfg config.Config) http.Handler {
 			r.Post("/review/proposals/{proposalID}/ai-evaluate", api.require(domain.RoleReviewer, api.evaluateProposalAI))
 			r.Get("/api-keys", api.listAPIKeys)
 			r.Post("/api-keys", api.createAPIKey)
-			r.Delete("/api-keys/{id}", api.revokeAPIKey)
+			r.Post("/api-keys/{id}/revoke", api.revokeAPIKey)
+			r.Delete("/api-keys/{id}", api.deleteAPIKey)
 			r.Get("/settings", api.getSettings)
 			r.Patch("/settings", api.require(domain.RoleAdmin, api.updateSettings))
 			r.Post("/settings/fetch-models", api.require(domain.RoleAdmin, api.fetchLLMModels))
@@ -172,6 +174,26 @@ func (a *API) createNamespace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 201, item)
+}
+func (a *API) updateNamespace(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respondError(w, http.StatusBadRequest, "missing namespace id")
+		return
+	}
+	var body struct {
+		Description        string `json:"description"`
+		CandidateThreshold int    `json:"candidateThreshold"`
+	}
+	if decode(w, r, &body) != nil {
+		return
+	}
+	item, err := a.store.UpdateNamespace(r.Context(), id, body.Description, body.CandidateThreshold)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, item)
 }
 func (a *API) listTags(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
@@ -482,6 +504,19 @@ func (a *API) revokeAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, http.StatusOK, map[string]string{"status": "api key revoked"})
+}
+
+func (a *API) deleteAPIKey(w http.ResponseWriter, r *http.Request) {
+	keyID := chi.URLParam(r, "id")
+	if keyID == "" {
+		respondError(w, http.StatusBadRequest, "missing key id")
+		return
+	}
+	if err := a.store.DeleteAPIKey(r.Context(), currentUser(r).ID, keyID); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	respond(w, http.StatusOK, map[string]string{"status": "api key deleted"})
 }
 
 func (a *API) evaluateProposalAI(w http.ResponseWriter, r *http.Request) {

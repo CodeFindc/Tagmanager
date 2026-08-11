@@ -94,11 +94,29 @@ func (s *Store) CreateNamespace(ctx context.Context, name, description string, t
 	return result, err
 }
 
+func (s *Store) UpdateNamespace(ctx context.Context, id, description string, threshold int) (domain.Namespace, error) {
+	description = strings.TrimSpace(description)
+	if threshold < 1 {
+		return domain.Namespace{}, fmt.Errorf("candidate threshold must be greater than 0")
+	}
+	var result domain.Namespace
+	err := s.pool.QueryRow(ctx, `
+		UPDATE tag_namespaces
+		SET description = $2, candidate_threshold = $3
+		WHERE id = $1
+		RETURNING id, name, description, candidate_threshold, created_at
+	`, id, description, threshold).Scan(&result.ID, &result.Name, &result.Description, &result.CandidateThreshold, &result.CreatedAt)
+	if err != nil {
+		return domain.Namespace{}, err
+	}
+	return result, nil
+}
+
 func (s *Store) ListTags(ctx context.Context, namespaceID, query string, limit int) ([]domain.Tag, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	rows, err := s.pool.Query(ctx, `SELECT t.id,t.namespace_id,t.canonical_name,t.normalized_name,t.description,t.status,t.version,COALESCE(json_agg(a.alias_name) FILTER (WHERE a.id IS NOT NULL),'[]') FROM tags t LEFT JOIN tag_aliases a ON a.tag_id=t.id WHERE t.namespace_id=$1 AND t.status='published' AND ($2='' OR t.canonical_name ILIKE '%' || $2 || '%') GROUP BY t.id ORDER BY t.canonical_name LIMIT $3`, namespaceID, query, limit)
+	rows, err := s.pool.Query(ctx, `SELECT t.id,t.namespace_id,t.canonical_name,t.normalized_name,t.description,t.status,t.version,COALESCE(json_agg(a.alias_name) FILTER (WHERE a.id IS NOT NULL),'[]') FROM tags t LEFT JOIN tag_aliases a ON a.tag_id=t.id WHERE ($1='' OR t.namespace_id::text=$1) AND t.status='published' AND ($2='' OR t.canonical_name ILIKE '%' || $2 || '%') GROUP BY t.id ORDER BY t.canonical_name LIMIT $3`, namespaceID, query, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -567,6 +585,20 @@ func (s *Store) RevokeAPIKey(ctx context.Context, userID, keyID string) error {
 	}
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("api key not found or already revoked")
+	}
+	return nil
+}
+
+func (s *Store) DeleteAPIKey(ctx context.Context, userID, keyID string) error {
+	tag, err := s.pool.Exec(ctx, `
+		DELETE FROM api_keys
+		WHERE id = $1 AND user_id = $2
+	`, keyID, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("api key not found")
 	}
 	return nil
 }

@@ -310,6 +310,12 @@ function NamespacesPage() {
   const [candidateThreshold, setCandidateThreshold] = useState(50)
   const [submitting, setSubmitting] = useState(false)
 
+  // Edit modal state
+  const [editingNs, setEditingNs] = useState<Namespace | null>(null)
+  const [editDescription, setEditDescription] = useState('')
+  const [editThreshold, setEditThreshold] = useState(50)
+  const [editSubmitting, setEditSubmitting] = useState(false)
+
   const reload = () => {
     api.namespaces()
       .then(res => setItems(res.data))
@@ -349,6 +355,37 @@ function NamespacesPage() {
     }
   }
 
+  function handleOpenEdit(ns: Namespace) {
+    setEditingNs(ns)
+    setEditDescription(ns.description || '')
+    setEditThreshold(ns.candidateThreshold)
+  }
+
+  async function handleSaveEdit(e: FormEvent) {
+    e.preventDefault()
+    if (!editingNs) return
+    if (!Number.isInteger(editThreshold) || editThreshold < 1) {
+      setError('候选池阈值必须是大于 0 的整数')
+      return
+    }
+    setError('')
+    setSuccess('')
+    setEditSubmitting(true)
+    try {
+      const updated = await api.updateNamespace(editingNs.id, {
+        description: editDescription.trim(),
+        candidateThreshold: editThreshold,
+      })
+      setSuccess(`标签域「${updated.name}」已更新！功能描述与触发阈值已生效。`)
+      setEditingNs(null)
+      reload()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新标签域失败')
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
+
   return (
     <section className="space-y-5">
       <PageHeader
@@ -359,7 +396,7 @@ function NamespacesPage() {
       {error && <Notice message={error} />}
       {success && <SuccessNotice message={success} />}
 
-      <Panel title="🌐 创建新标签域" description="默认阈值 50；设为较小值（如 5）便于联调测试。创建后暂不支持在界面修改阈值。">
+      <Panel title="🌐 创建新标签域" description="默认阈值 50；设为较小值（如 5）便于联调测试。可在下方列表中随时编辑功能描述与触发阈值。">
         <form onSubmit={handleCreate} className="flex flex-wrap items-end gap-3.5 pt-1">
           <Field label="标签域名称" className="min-w-[180px] flex-1">
             <input required placeholder="例如：产品能力 / 行业主题" className={inputClass} value={name} onChange={e => setName(e.target.value)} />
@@ -384,12 +421,13 @@ function NamespacesPage() {
               <th className="py-3.5 px-4 sm:px-5">功能描述</th>
               <th className="py-3.5 px-4 sm:px-5">触发阈值</th>
               <th className="hidden py-3.5 px-4 sm:px-5 lg:table-cell">系统 ID</th>
+              <th className="py-3.5 px-4 sm:px-5 text-right">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
             {items.length === 0 ? (
               <tr>
-                <td colSpan={4} className="py-8 text-center text-slate-500 dark:text-slate-400">暂无已创建的标签域，请在上方卡片中先创建一个。</td>
+                <td colSpan={5} className="py-8 text-center text-slate-500 dark:text-slate-400">暂无已创建的标签域，请在上方卡片中先创建一个。</td>
               </tr>
             ) : items.map(ns => (
               <tr key={ns.id} className="transition-colors hover:bg-slate-50/60 dark:hover:bg-slate-800/50">
@@ -399,11 +437,57 @@ function NamespacesPage() {
                   <span className="rounded-md bg-slate-100 px-2.5 py-1 font-mono text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300 border border-slate-200/60 dark:border-slate-700/60">{ns.candidateThreshold}</span>
                 </td>
                 <td className="hidden max-w-[140px] truncate py-3.5 px-4 sm:px-5 font-mono text-xs text-slate-400 dark:text-slate-500 lg:table-cell" title={ns.id}>{ns.id}</td>
+                <td className="py-3.5 px-4 sm:px-5 text-right">
+                  <button
+                    onClick={() => handleOpenEdit(ns)}
+                    className="font-medium text-brand hover:underline"
+                  >
+                    ✏️ 编辑
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </TableShell>
+
+      {editingNs && (
+        <Modal title={`编辑标签域「${editingNs.name}」`} onClose={() => setEditingNs(null)}>
+          <form onSubmit={handleSaveEdit} className="space-y-4">
+            <Field label="标签域名称">
+              <input disabled className={`${inputClass} bg-slate-100 dark:bg-slate-800 cursor-not-allowed text-slate-500`} value={editingNs.name} />
+            </Field>
+            <Field label="功能描述">
+              <textarea
+                className={`${inputClass} min-h-[80px]`}
+                value={editDescription}
+                onChange={e => setEditDescription(e.target.value)}
+                placeholder="用于描述该标签域的应用场景与归并目标"
+              />
+            </Field>
+            <Field label="自动归并触发阈值">
+              <input
+                required
+                type="number"
+                min={1}
+                step={1}
+                className={inputClass}
+                value={editThreshold}
+                onChange={e => setEditThreshold(Number(e.target.value))}
+              />
+              <p className="mt-1 text-[11px] text-slate-500">未命中候选词在该标签域积累达到此阈值时，自动冻结窗口并触发 LLM 归并任务。</p>
+            </Field>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" className={btnSecondary} onClick={() => setEditingNs(null)}>
+                取消
+              </button>
+              <button type="submit" disabled={editSubmitting} className={btnPrimary}>
+                {editSubmitting ? '保存中…' : '保存修改'}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </section>
   )
 }
@@ -536,39 +620,223 @@ function NamespacePicker({ value, onChange, namespaces }: { value: string; onCha
 }
 
 function Dashboard({ isAdmin }: { isAdmin: boolean }) {
-  const { items: namespaces, error } = useNamespaces()
+  const { items: namespaces, error: nsError } = useNamespaces()
+  const [pendingProposals, setPendingProposals] = useState<Proposal[]>([])
+  const [tags, setTags] = useState<Tag[]>([])
+  const [poolCounts, setPoolCounts] = useState<Record<string, { count: number; totalOccurrences: number }>>({})
+  const [selectedNsId, setSelectedNsId] = useState<string>('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  const loadData = async () => {
+    setLoading(true)
+    setError('')
+    try {
+      // 1. Fetch pending proposals
+      const propRes = await api.proposals({ status: 'pending_review' }).catch(() => ({ data: [] }))
+      setPendingProposals(propRes.data)
+
+      // 2. Fetch all published tags across namespaces
+      const tagRes = await api.tags('').catch(() => ({ data: [] }))
+      setTags(tagRes.data)
+
+      // 3. Fetch pool entries count per namespace
+      const nsList = await api.namespaces().catch(() => ({ data: [] }))
+      const poolMap: Record<string, { count: number; totalOccurrences: number }> = {}
+      await Promise.all(
+        nsList.data.map(async ns => {
+          try {
+            const pRes = await api.pool(ns.id)
+            const count = pRes.data.length
+            const totalOccurrences = pRes.data.reduce((acc, curr) => acc + (curr.occurrenceCount || 1), 0)
+            poolMap[ns.id] = { count, totalOccurrences }
+          } catch {
+            poolMap[ns.id] = { count: 0, totalOccurrences: 0 }
+          }
+        })
+      )
+      setPoolCounts(poolMap)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '加载概览数据失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
+  const namespaceMap = useMemo(() => {
+    const map = new Map<string, string>()
+    namespaces.forEach(n => map.set(n.id, n.name))
+    return map
+  }, [namespaces])
+
+  const filteredTags = useMemo(() => {
+    if (!selectedNsId) return tags
+    return tags.filter(t => t.namespaceId === selectedNsId)
+  }, [tags, selectedNsId])
+
   return (
-    <section className="space-y-5">
+    <section className="space-y-6">
       <PageHeader
         title="运营概览"
-        description="管理标签命中、候选积压和人工审核。"
+        description="管理标签域、实时统计待审核提案与发布标签的候选池分布。"
         actions={isAdmin ? (
-          <NavLink to="/namespaces" className={btnPrimary}>创建标签域</NavLink>
+          <NavLink to="/namespaces" className={btnPrimary}>+ 创建标签域</NavLink>
         ) : undefined}
       />
-      {error ? <Notice message={error} /> : <>
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-          <StatCard compact title="标签域" value={namespaces.length} detail="按业务域隔离规则和候选阈值" />
-          <StatCard compact title="发布标签" value="—" detail="选择域后可在标签库查看" />
-          <StatCard compact title="候选池" value="—" detail="达到阈值后自动创建汇总任务" />
-          <StatCard compact title="待审核" value="—" detail="模型建议须人工批准才发布" />
+
+      {(nsError || error) && <Notice message={nsError || error} />}
+
+      {/* 顶部卡片区域：仅保留【标签域】与【待审核】2 个卡片 */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {/* 卡片 1: 标签域 */}
+        <div className="rounded-xl border border-slate-200/80 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider dark:text-slate-400">🌐 标签域数量</span>
+            <NavLink to="/namespaces" className="text-xs font-medium text-brand hover:underline">查看与管理 →</NavLink>
+          </div>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold text-slate-900 dark:text-white tabular-nums">{namespaces.length}</span>
+            <span className="text-xs text-slate-500">个独立业务域</span>
+          </div>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">按业务隔离标签库规则，自定义自动归并触发阈值。</p>
         </div>
-        <Panel title="开始使用">
-          <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-600">
-            <li>
-              {isAdmin ? (
-                <>
-                  <NavLink to="/namespaces" className="font-medium text-brand hover:underline">创建一个标签域并设置候选池阈值</NavLink>。
-                </>
-              ) : (
-                '请管理员创建一个标签域并设置候选池阈值。'
-              )}
-            </li>
-            <li>导入首批标签，候选池任务会调用已配置的 OpenAI 兼容模型。</li>
-            <li>在审核中心对模型建议进行逐项采纳、编辑与决策。</li>
-          </ol>
+
+        {/* 卡片 2: 待审核 */}
+        <div className={`rounded-xl border p-5 shadow-sm transition-all ${pendingProposals.length > 0 ? 'border-amber-300/80 bg-amber-50/40 dark:border-amber-900/60 dark:bg-amber-950/20' : 'border-slate-200/80 bg-white dark:border-slate-800 dark:bg-slate-900'}`}>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-amber-800 uppercase tracking-wider dark:text-amber-300">📋 待审核提案</span>
+            {pendingProposals.length > 0 && (
+              <NavLink to="/review" className="rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-500/20 dark:bg-amber-400/20 dark:text-amber-300">
+                进入审核中心处理 ({pendingProposals.length}) →
+              </NavLink>
+            )}
+          </div>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-3xl font-extrabold text-slate-900 dark:text-white tabular-nums">{pendingProposals.length}</span>
+            <span className="text-xs text-slate-500">个提案等待人工审核</span>
+          </div>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">大模型汇总生成的归并方案须由审核专家批准后发布。</p>
+        </div>
+      </div>
+
+      {/* 待审核提案快速查看面板 (如有待审核提案) */}
+      {pendingProposals.length > 0 && (
+        <Panel
+          title="⚡ 积压待审核提案 (Awaiting Review)"
+          description="系统大模型已完成归并计算，请及时进入审核中心决策发布。"
+        >
+          <div className="space-y-2.5 pt-1">
+            {pendingProposals.slice(0, 5).map(p => (
+              <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200/70 bg-amber-50/30 p-3 text-xs dark:border-amber-900/40 dark:bg-amber-950/30">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-slate-900 dark:text-slate-100">提案 ID: {p.id.slice(0, 8)}…</span>
+                    <span className="rounded bg-amber-100 px-2 py-0.5 font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300/50">待审核</span>
+                    <span className="text-slate-500">标签域: {namespaceMap.get(p.namespaceId) || p.namespaceId}</span>
+                  </div>
+                  <div className="text-slate-500 dark:text-slate-400">
+                    创建时间: {new Date(p.createdAt).toLocaleString('zh-CN')}
+                  </div>
+                </div>
+                <NavLink to="/review" className={btnPrimary}>
+                  开始审核
+                </NavLink>
+              </div>
+            ))}
+          </div>
         </Panel>
-      </>}
+      )}
+
+      {/* 正下方：发布标签与候选池按行展示明细面板 */}
+      <Panel
+        title="🏷️ 发布标签与对应候选池明细"
+        description="按行展示每个规范发布标签的所属标签域、涵盖别名及其对应标签域的候选池积压条数与累积频次。"
+        actions={
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-slate-500 dark:text-slate-400">筛选标签域:</label>
+            <select
+              className={`${inputClass} w-auto min-w-[140px] py-1 text-xs`}
+              value={selectedNsId}
+              onChange={e => setSelectedNsId(e.target.value)}
+            >
+              <option value="">全部标签域 ({namespaces.length})</option>
+              {namespaces.map(n => (
+                <option key={n.id} value={n.id}>{n.name}</option>
+              ))}
+            </select>
+          </div>
+        }
+      >
+        <TableShell>
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="bg-slate-100/80 dark:bg-slate-800/80 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+              <tr>
+                <th className="py-3 px-4 font-semibold">发布规范标签</th>
+                <th className="py-3 px-4 font-semibold">所属标签域</th>
+                <th className="py-3 px-4 font-semibold">涵盖别名</th>
+                <th className="py-3 px-4 font-semibold">所属域候选池积压</th>
+                <th className="py-3 px-4 font-semibold">候选词累积频次</th>
+                <th className="py-3 px-4 font-semibold">版本</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-xs text-slate-500">正在加载发布标签与候选池数据…</td>
+                </tr>
+              ) : filteredTags.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
+                    {selectedNsId ? '当前所选标签域暂无发布的规范标签。' : '系统中暂无发布的规范标签。可前往「标签库」或「批次导入」管理。'}
+                  </td>
+                </tr>
+              ) : filteredTags.map(tag => {
+                const poolInfo = poolCounts[tag.namespaceId] || { count: 0, totalOccurrences: 0 }
+                return (
+                  <tr key={tag.id} className="transition-colors hover:bg-slate-50/70 dark:hover:bg-slate-800/50">
+                    <td className="py-3 px-4">
+                      <div className="font-bold text-slate-900 dark:text-slate-100">{tag.canonicalName}</div>
+                      {tag.description && <div className="text-[11px] text-slate-500 truncate max-w-[200px]" title={tag.description}>{tag.description}</div>}
+                    </td>
+                    <td className="py-3 px-4 font-medium text-slate-700 dark:text-slate-300">
+                      {namespaceMap.get(tag.namespaceId) || '未知标签域'}
+                    </td>
+                    <td className="py-3 px-4">
+                      {tag.aliases && tag.aliases.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                            {tag.aliases.length} 个别名
+                          </span>
+                          <span className="text-xs text-slate-500 truncate max-w-[160px]" title={tag.aliases.join('、')}>
+                            ({tag.aliases.slice(0, 2).join('、')}{tag.aliases.length > 2 ? '…' : ''})
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">无别名</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`inline-flex items-center rounded-md px-2.5 py-1 text-xs font-semibold font-mono border ${poolInfo.count > 0 ? 'bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-900/50' : 'bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700'}`}>
+                        {poolInfo.count} 条待归并
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-mono text-xs tabular-nums text-slate-600 dark:text-slate-400">
+                      {poolInfo.totalOccurrences} 次
+                    </td>
+                    <td className="py-3 px-4 font-mono text-xs tabular-nums text-slate-500">
+                      v{tag.version}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </TableShell>
+      </Panel>
     </section>
   )
 }
@@ -2177,6 +2445,16 @@ function ApiDocsPage() {
     }
   }
 
+  const handleDelete = async (keyId: string, name: string) => {
+    if (!window.confirm(`⚠️ 警告：确定要彻底删除 API Key "${name}" 吗？\n\n删除后此 Key 的密钥记录将从数据库完全移除，此操作不可逆！`)) return
+    try {
+      await api.deleteAPIKey(keyId)
+      loadKeys()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : '删除失败')
+    }
+  }
+
   const apiHost = window.location.origin
   const exampleEndpoint = `${apiHost}/api/v1/tags/match`
   const activeKeyPrefix = keys.find(k => k.status === 'active')?.keyPrefix
@@ -2312,15 +2590,21 @@ print(data)`,
                     <td className="p-3 text-slate-500">
                       {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString('zh-CN') : '尚未调用'}
                     </td>
-                    <td className="p-3 text-right">
+                    <td className="p-3 text-right space-x-3">
                       {k.status === 'active' && (
                         <button
                           onClick={() => handleRevoke(k.id, k.name)}
-                          className="font-medium text-rose-600 hover:underline"
+                          className="font-medium text-amber-600 hover:underline dark:text-amber-400"
                         >
                           撤销
                         </button>
                       )}
+                      <button
+                        onClick={() => handleDelete(k.id, k.name)}
+                        className="font-medium text-rose-600 hover:underline dark:text-rose-400"
+                      >
+                        删除
+                      </button>
                     </td>
                   </tr>
                 ))}
