@@ -228,8 +228,8 @@ func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, url string, bo
 }
 
 func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
-	// Wrap with 90s TTFT timeout so if the LLM guided_decoding/OOM engine hangs on 200 OK headers, we abort & fallback
-	scanner := bufio.NewScanner(newTTFTReader(body, 90*time.Second))
+	// Wrap with 300s TTFT timeout for long GPU prefill on 27B+ models
+	scanner := bufio.NewScanner(newTTFTReader(body, 300*time.Second))
 	// Structured consolidation can emit large single SSE lines.
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2<<20)
@@ -274,27 +274,30 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
 				"isReasoning", isReasoning,
 			)
 		}
-		if isReasoning {
-			reasoningContent.WriteString(deltaText)
-		} else {
-			content.WriteString(deltaText)
-		}
 		chunks++
 
-		if time.Since(lastLogAt) >= 5*time.Second {
+		if isReasoning {
+			reasoningContent.WriteString(deltaText)
+			c.logger.Info("llm token [thinking]", "chunk", chunks, "delta", deltaText)
+		} else {
+			content.WriteString(deltaText)
+			c.logger.Info("llm token [content]", "chunk", chunks, "delta", deltaText)
+		}
+
+		if time.Since(lastLogAt) >= 3*time.Second {
 			if content.Len() > 0 {
-				c.logger.Info("llm stream progress",
+				c.logger.Info("llm stream progress summary",
 					"chunks", chunks,
 					"contentBytes", content.Len(),
 					"elapsed", time.Since(started).Round(time.Millisecond).String(),
-					"preview", truncate(content.String(), 120),
+					"totalContent", truncate(content.String(), 200),
 				)
 			} else if reasoningContent.Len() > 0 {
-				c.logger.Info("llm reasoning progress",
+				c.logger.Info("llm reasoning progress summary",
 					"chunks", chunks,
 					"reasoningBytes", reasoningContent.Len(),
 					"elapsed", time.Since(started).Round(time.Millisecond).String(),
-					"preview", truncate(reasoningContent.String(), 120),
+					"totalReasoning", truncate(reasoningContent.String(), 200),
 				)
 			}
 			lastLogAt = time.Now()
