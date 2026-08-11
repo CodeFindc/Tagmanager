@@ -132,13 +132,13 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 					BaseURL:    strings.TrimRight(strings.TrimSpace(dbSetting.BaseURL), "/"),
 					APIKey:     strings.TrimSpace(dbSetting.APIKey),
 					Model:      strings.TrimSpace(dbSetting.Model),
-					Timeout:    600 * time.Second,
+					Timeout:    1200 * time.Second,
 					MaxRetries: 3,
 				}
 				if dbSetting.TimeoutSeconds > 0 {
 					tSec := dbSetting.TimeoutSeconds
-					if tSec < 300 {
-						tSec = 300
+					if tSec < 600 {
+						tSec = 600
 					}
 					llmCfg.Timeout = time.Duration(tSec) * time.Second
 				}
