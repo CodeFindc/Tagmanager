@@ -1162,21 +1162,27 @@ function ImportPage() {
       {result && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <StatCard compact title="总计" value={result.totalCount} detail="原始输入" />
-            <StatCard compact title="已命中" value={result.matchedCount} detail="未新增标签" />
+            <StatCard compact title="总计" value={`${result.totalCount} 行`} detail="原始输入标签" />
+            <StatCard compact title="已命中" value={`${result.matchedCount} 行`} detail="直接匹配已有规范标签" />
             <StatCard
               compact
               title="进入候选池"
-              value={result.pooledCount}
-              detail={typeof result.openCandidates === 'number' ? `未解决共 ${result.openCandidates}` : '等待阈值触发'}
+              value={`${result.pooledCount} 次`}
+              detail={typeof result.openCandidates === 'number' ? `去重后独立候选词 ${result.openCandidates} 个` : '等待阈值触发'}
             />
             <StatCard
               compact
               title="无效项"
-              value={result.invalidCount}
-              detail={typeof result.threshold === 'number' ? `阈值 ${result.threshold}` : '—'}
+              value={`${result.invalidCount} 行`}
+              detail={typeof result.threshold === 'number' ? `触发阈值 ${result.threshold}` : '—'}
             />
           </div>
+
+          {result.pooledCount > 0 && typeof result.openCandidates === 'number' && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-xs leading-relaxed text-blue-950 dark:border-blue-900/60 dark:bg-blue-950/40 dark:text-blue-200">
+              💡 <strong>数据统计说明：</strong>本批次共有 <strong>{result.pooledCount} 行</strong>未命中标签分流进入候选池。经规范化<strong>自动去重与词频累加</strong>后，当前标签域中积压的独立未解决候选词条目共有 <strong>{result.openCandidates} 个</strong>（达到阈值时将自动触发大模型批次归并）。
+            </div>
+          )}
           {result.consolidationMessage && (
             <div className={`rounded-xl border p-4 text-sm ${
               result.consolidationStatus === 'created' || result.consolidationStatus === 'reclaimed'
@@ -3395,14 +3401,14 @@ function SettingsPage() {
                   <div className="grid grid-cols-2 gap-3 min-w-0">
                     <div className="space-y-1">
                       <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 1800 秒（推荐 600s 以上）</p>
                       <input
                         type="number"
                         min="10"
-                        max="600"
+                        max="1800"
                         className={settingInputClass}
-                        value={consolidationLlm.timeoutSeconds ?? 300}
-                        onChange={e => setConsolidationLlm({ ...consolidationLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}
+                        value={consolidationLlm.timeoutSeconds ?? 600}
+                        onChange={e => setConsolidationLlm({ ...consolidationLlm, timeoutSeconds: parseInt(e.target.value, 10) || 600 })}
                       />
                     </div>
                     <div className="space-y-1">
@@ -3547,11 +3553,11 @@ function SettingsPage() {
                   <div className="grid grid-cols-2 gap-3 min-w-0">
                     <div className="space-y-1">
                       <label className="block text-xs font-bold text-slate-900 dark:text-slate-100">单次超时 (秒)</label>
-                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 600 秒</p>
+                      <p className="text-[11px] text-slate-400 dark:text-slate-500">范围 10 - 1800 秒</p>
                       <input
                         type="number"
                         min="10"
-                        max="600"
+                        max="1800"
                         className={settingInputClass}
                         value={auditLlm.timeoutSeconds ?? 300}
                         onChange={e => setAuditLlm({ ...auditLlm, timeoutSeconds: parseInt(e.target.value, 10) || 300 })}

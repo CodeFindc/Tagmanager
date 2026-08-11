@@ -27,12 +27,24 @@ func NewOpenAICompatible(cfg config.LLMConfig, logger *slog.Logger) *OpenAICompa
 	if logger == nil {
 		logger = slog.Default()
 	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 600 * time.Second
+	}
+	tr := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ResponseHeaderTimeout: 120 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	}
 	return &OpenAICompatibleClient{
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
 		model:   cfg.Model,
-		client:  &http.Client{Timeout: cfg.Timeout},
-		logger:  logger,
+		client: &http.Client{
+			Timeout:   timeout,
+			Transport: tr,
+		},
+		logger: logger,
 	}
 }
 
@@ -264,6 +276,9 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Client.Timeout") {
+			return "", fmt.Errorf("大模型生成流响应超时 (read SSE stream: %w)。提示：大模型对较大批次候选词的结构化归并生成耗时较长，请前往【设置中心】增大超时时间(TimeoutSeconds，建议 600 秒以上)或调小候选池触发阈值", err)
+		}
 		return "", fmt.Errorf("read SSE stream: %w", err)
 	}
 	if content.Len() == 0 {
@@ -456,15 +471,27 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	timeout := 300 * time.Second
+	timeout := 600 * time.Second
 	if cfg.TimeoutSeconds > 0 {
-		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
+		tSec := cfg.TimeoutSeconds
+		if tSec < 300 {
+			tSec = 300
+		}
+		timeout = time.Duration(tSec) * time.Second
 	}
-	client := &http.Client{Timeout: timeout}
+	tr := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		ResponseHeaderTimeout: 120 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	client := &http.Client{
+		Timeout:   timeout,
+		Transport: tr,
+	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "Client.Timeout") {
-			return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型响应超时 (超过 %d 秒未返回)。建议更换更快的模型或检查大模型服务状态", int(timeout.Seconds()))
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Client.Timeout") {
+			return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型响应超时 (超过 %d 秒未返回)。提示：模型对较多提案标签评估生成耗时较长，请前往【设置中心】增大超时时间(TimeoutSeconds，建议 600 秒以上)", int(timeout.Seconds()))
 		}
 		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审 Endpoint (%s) 失败: %w", url, err)
 	}
