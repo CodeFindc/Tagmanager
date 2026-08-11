@@ -196,7 +196,7 @@ func (c *OpenAICompatibleClient) doStream(ctx context.Context, url string, body 
 		return extractContentFromCompletionJSON(payload)
 	}
 
-	return c.readSSE(response.Body)
+	return c.readSSE(response.Body, c.client.Timeout)
 }
 
 func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, url string, body []byte, entryCount int) (string, error) {
@@ -227,9 +227,12 @@ func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, url string, bo
 	return extractContentFromCompletionJSON(payload)
 }
 
-func (c *OpenAICompatibleClient) readSSE(body io.Reader) (string, error) {
-	// Wrap with 300s TTFT timeout for long GPU prefill on 27B+ models
-	scanner := bufio.NewScanner(newTTFTReader(body, 300*time.Second))
+func (c *OpenAICompatibleClient) readSSE(body io.Reader, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = 600 * time.Second
+	}
+	// Wrap with dynamic TTFT timeout matching configured LLM client timeout
+	scanner := bufio.NewScanner(newTTFTReader(body, timeout))
 	// Structured consolidation can emit large single SSE lines.
 	buf := make([]byte, 0, 64*1024)
 	scanner.Buffer(buf, 2<<20)
