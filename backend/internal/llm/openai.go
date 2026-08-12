@@ -23,14 +23,15 @@ var (
 )
 
 type OpenAICompatibleClient struct {
-	baseURL      string
-	apiKey       string
-	model        string
-	client       *openai.Client
-	totalTimeout time.Duration
-	ttftTimeout  time.Duration
-	idleTimeout  time.Duration
-	logger       *slog.Logger
+	baseURL         string
+	apiKey          string
+	model           string
+	client          *openai.Client // Streaming client (ResponseHeaderTimeout = 120s)
+	nonStreamClient *openai.Client // Non-streaming client (ResponseHeaderTimeout = 0)
+	totalTimeout    time.Duration
+	ttftTimeout     time.Duration
+	idleTimeout     time.Duration
+	logger          *slog.Logger
 }
 
 func NewOpenAICompatible(cfg config.LLMConfig, logger *slog.Logger) *OpenAICompatibleClient {
@@ -56,32 +57,46 @@ func NewOpenAICompatible(cfg config.LLMConfig, logger *slog.Logger) *OpenAICompa
 		idle = tot
 	}
 
-	oc := openai.DefaultConfig(cfg.APIKey)
-	oc.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	oc.HTTPClient = &http.Client{
-		Timeout: 0, // No monolithic Client.Timeout; timeouts controlled by ctx + watchdog
+	ocStream := openai.DefaultConfig(cfg.APIKey)
+	ocStream.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	ocStream.HTTPClient = &http.Client{
+		Timeout: 0, // Timeout controlled by ctx + watchdog
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			TLSHandshakeTimeout:   15 * time.Second,
-			ResponseHeaderTimeout: 120 * time.Second,
+			ResponseHeaderTimeout: 120 * time.Second, // Stream headers return immediately (~44ms)
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+
+	ocNonStream := openai.DefaultConfig(cfg.APIKey)
+	ocNonStream.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	ocNonStream.HTTPClient = &http.Client{
+		Timeout: 0, // Timeout controlled by ctx
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 0, // No header timeout for non-stream generation
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
 
 	return &OpenAICompatibleClient{
-		baseURL:      oc.BaseURL,
-		apiKey:       cfg.APIKey,
-		model:        cfg.Model,
-		client:       openai.NewClientWithConfig(oc),
-		totalTimeout: tot,
-		ttftTimeout:  ttft,
-		idleTimeout:  idle,
-		logger:       logger,
+		baseURL:         ocStream.BaseURL,
+		apiKey:          cfg.APIKey,
+		model:           cfg.Model,
+		client:          openai.NewClientWithConfig(ocStream),
+		nonStreamClient: openai.NewClientWithConfig(ocNonStream),
+		totalTimeout:    tot,
+		ttftTimeout:     ttft,
+		idleTimeout:     idle,
+		logger:          logger,
 	}
 }
 
-func (c *OpenAICompatibleClient) clientFor(baseURL, apiKey string, timeout time.Duration) *openai.Client {
+func (c *OpenAICompatibleClient) clientFor(baseURL, apiKey string, timeout time.Duration, isStream bool) *openai.Client {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		baseURL = c.baseURL
@@ -92,13 +107,19 @@ func (c *OpenAICompatibleClient) clientFor(baseURL, apiKey string, timeout time.
 	}
 	oc := openai.DefaultConfig(apiKey)
 	oc.BaseURL = baseURL
+
+	headerTimeout := 120 * time.Second
+	if !isStream {
+		headerTimeout = 0 // Non-streaming responses emit headers only after full generation completes
+	}
+
 	oc.HTTPClient = &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			TLSHandshakeTimeout:   15 * time.Second,
-			ResponseHeaderTimeout: 120 * time.Second,
+			ResponseHeaderTimeout: headerTimeout,
 			IdleConnTimeout:       90 * time.Second,
 		},
 	}
@@ -330,7 +351,11 @@ func extractReasoningContent(resp openai.ChatCompletionStreamResponse) string {
 }
 
 func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, req openai.ChatCompletionRequest, entryCount int) (string, error) {
-	resp, err := c.client.CreateChatCompletion(ctx, req)
+	client := c.nonStreamClient
+	if client == nil {
+		client = c.clientFor(c.baseURL, c.apiKey, 0, false)
+	}
+	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -509,7 +534,7 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 		timeout = time.Duration(tSec) * time.Second
 	}
 
-	client := c.clientFor(baseURL, apiKey, timeout)
+	client := c.clientFor(baseURL, apiKey, timeout, false) // non-stream has ResponseHeaderTimeout = 0
 	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Client.Timeout") {
@@ -639,7 +664,7 @@ func (c *OpenAICompatibleClient) EvaluateProposalStream(ctx context.Context, cfg
 		idle = tot
 	}
 
-	client := c.clientFor(baseURL, apiKey, 0)
+	client := c.clientFor(baseURL, apiKey, 0, true) // streaming has ResponseHeaderTimeout = 120s
 	reqCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 
@@ -715,7 +740,7 @@ func (c *OpenAICompatibleClient) FetchModels(ctx context.Context, baseURL, apiKe
 		return nil, fmt.Errorf("BaseURL 和 APIKey 为必填项，无法获取模型列表")
 	}
 
-	client := c.clientFor(baseURL, apiKey, 15*time.Second)
+	client := c.clientFor(baseURL, apiKey, 15*time.Second, false)
 	res, err := client.ListModels(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("无法连接到 %s/models: %w", baseURL, err)
@@ -748,7 +773,7 @@ func (c *OpenAICompatibleClient) TestConnection(ctx context.Context, cfg domain.
 		return 0, fmt.Errorf(" BaseURL、APIKey 与 Model 为必填项，无法发起连接测试")
 	}
 
-	client := c.clientFor(baseURL, apiKey, 15*time.Second)
+	client := c.clientFor(baseURL, apiKey, 15*time.Second, false)
 	req := openai.ChatCompletionRequest{
 		Model: model,
 		Messages: []openai.ChatCompletionMessage{
@@ -800,7 +825,8 @@ func (c *OpenAICompatibleClient) ExtractTagFromText(ctx context.Context, req dom
 		},
 	}
 
-	resp, err := c.client.CreateChatCompletion(ctx, chatReq)
+	client := c.clientFor(c.baseURL, c.apiKey, 0, false)
+	resp, err := client.CreateChatCompletion(ctx, chatReq)
 	if err != nil {
 		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 接口请求失败: %w", err)
 	}

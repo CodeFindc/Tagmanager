@@ -314,3 +314,46 @@ func TestOpenAICompatibleClient_Consolidate_ReasoningContent(t *testing.T) {
 		t.Fatalf("unexpected output: %+v", output)
 	}
 }
+
+func TestOpenAICompatibleClient_Consolidate_NonStreamLongHeaderSuccess(t *testing.T) {
+	// Simulate non-stream server delaying response headers by 300ms (exceeding short header timeouts)
+	mockResponseJSON := `{
+		"choices": [{
+			"message": {
+				"content": "{\"tags\":[{\"canonicalName\":\"LongHeaderTag\",\"description\":\"d\",\"aliases\":[],\"coveredIds\":[\"e1\"],\"rationale\":\"r\",\"confidence\":1.0}]}"
+			}
+		}]
+	}`
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(mockResponseJSON))
+	}))
+	defer ts.Close()
+
+	client := NewOpenAICompatible(config.LLMConfig{
+		BaseURL: ts.URL,
+		APIKey:  "key",
+		Model:   "model",
+		Timeout: 5 * time.Second,
+	}, nil)
+
+	// Direct non-stream call should not be killed by a short ResponseHeaderTimeout
+	req := client.buildChatCompletionRequest(ConsolidationRequest{
+		Entries: []InputEntry{{ID: "e1", Name: "cloud", Occurrences: 1}},
+	}, false, false)
+
+	content, err := client.doNonStream(context.Background(), req, 1)
+	if err != nil {
+		t.Fatalf("unexpected error on non-stream long header delay: %v", err)
+	}
+	output, err := parseConsolidationContent(content)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+	if len(output.Tags) != 1 || output.Tags[0].CanonicalName != "LongHeaderTag" {
+		t.Fatalf("unexpected output: %+v", output)
+	}
+}
