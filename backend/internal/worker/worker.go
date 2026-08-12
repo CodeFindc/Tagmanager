@@ -20,13 +20,14 @@ type Worker struct {
 	llm         llm.Client
 	logger      *slog.Logger
 	maxAttempts int
+	cfg         config.Config
 }
 
-func New(pool *pgxpool.Pool, client llm.Client, logger *slog.Logger, maxAttempts int) *Worker {
+func New(pool *pgxpool.Pool, client llm.Client, logger *slog.Logger, maxAttempts int, cfg config.Config) *Worker {
 	if maxAttempts <= 0 {
 		maxAttempts = 3
 	}
-	return &Worker{pool: pool, llm: client, logger: logger, maxAttempts: maxAttempts}
+	return &Worker{pool: pool, llm: client, logger: logger, maxAttempts: maxAttempts, cfg: cfg}
 }
 
 func (w *Worker) Run(ctx context.Context) error {
@@ -63,7 +64,7 @@ func (w *Worker) reclaimStaleRunning(ctx context.Context) (int64, error) {
 		    run_after=now(),
 		    completed_at=NULL
 		WHERE status='running'::job_status
-		  AND COALESCE(started_at, created_at) < now() - interval '15 minutes'`)
+		  AND COALESCE(started_at, created_at) < now() - interval '30 minutes'`)
 	if err != nil {
 		return 0, err
 	}
@@ -123,6 +124,11 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 	)
 
 	llmClient := w.llm
+	jobBudget := w.cfg.LLM.JobBudget
+	if jobBudget <= 0 {
+		jobBudget = 1200 * time.Second
+	}
+
 	var dbSetting domain.LLMServiceConfig
 	var rawSetting []byte
 	if err := w.pool.QueryRow(ctx, `SELECT value FROM system_settings WHERE key = 'consolidation_llm_config'`).Scan(&rawSetting); err == nil && len(rawSetting) > 0 {
@@ -142,6 +148,16 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 					}
 					llmCfg.Timeout = time.Duration(tSec) * time.Second
 				}
+				if dbSetting.TTFTSeconds > 0 {
+					llmCfg.TTFTTimeout = time.Duration(dbSetting.TTFTSeconds) * time.Second
+				}
+				if dbSetting.IdleSeconds > 0 {
+					llmCfg.IdleTimeout = time.Duration(dbSetting.IdleSeconds) * time.Second
+				}
+				if dbSetting.JobBudgetSeconds > 0 {
+					llmCfg.JobBudget = time.Duration(dbSetting.JobBudgetSeconds) * time.Second
+					jobBudget = llmCfg.JobBudget
+				}
 				if dbSetting.MaxRetries > 0 {
 					llmCfg.MaxRetries = dbSetting.MaxRetries
 				}
@@ -151,7 +167,10 @@ func (w *Worker) ProcessOne(ctx context.Context) error {
 		}
 	}
 
-	output, err := llmClient.Consolidate(ctx, llm.ConsolidationRequest{
+	jobCtx, jobCancel := context.WithTimeout(ctx, jobBudget)
+	defer jobCancel()
+
+	output, err := llmClient.Consolidate(jobCtx, llm.ConsolidationRequest{
 		NamespaceName: namespaceName,
 		Feedback:      feedback,
 		ExistingTags:  existingTags,

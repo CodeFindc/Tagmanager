@@ -1,51 +1,108 @@
 package llm
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/codefun/tagmanager/backend/internal/config"
 	"github.com/codefun/tagmanager/backend/internal/domain"
+	"github.com/sashabaranov/go-openai"
+)
+
+var (
+	errTTFTTimeout = errors.New("ttft timeout")
+	errIdleTimeout = errors.New("idle timeout")
 )
 
 type OpenAICompatibleClient struct {
-	baseURL, apiKey, model string
-	client                 *http.Client
-	logger                 *slog.Logger
+	baseURL      string
+	apiKey       string
+	model        string
+	client       *openai.Client
+	totalTimeout time.Duration
+	ttftTimeout  time.Duration
+	idleTimeout  time.Duration
+	logger       *slog.Logger
 }
 
 func NewOpenAICompatible(cfg config.LLMConfig, logger *slog.Logger) *OpenAICompatibleClient {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	timeout := cfg.Timeout
-	if timeout <= 0 {
-		timeout = 600 * time.Second
+	tot := cfg.Timeout
+	if tot <= 0 {
+		tot = 1200 * time.Second
 	}
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ResponseHeaderTimeout: 120 * time.Second,
-		IdleConnTimeout:       90 * time.Second,
+	ttft := cfg.TTFTTimeout
+	if ttft <= 0 {
+		ttft = 150 * time.Second
 	}
-	return &OpenAICompatibleClient{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
-		model:   cfg.Model,
-		client: &http.Client{
-			Timeout:   timeout,
-			Transport: tr,
+	if ttft > tot {
+		ttft = tot
+	}
+	idle := cfg.IdleTimeout
+	if idle <= 0 {
+		idle = 90 * time.Second
+	}
+	if idle > tot {
+		idle = tot
+	}
+
+	oc := openai.DefaultConfig(cfg.APIKey)
+	oc.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	oc.HTTPClient = &http.Client{
+		Timeout: 0, // No monolithic Client.Timeout; timeouts controlled by ctx + watchdog
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 120 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
 		},
-		logger: logger,
 	}
+
+	return &OpenAICompatibleClient{
+		baseURL:      oc.BaseURL,
+		apiKey:       cfg.APIKey,
+		model:        cfg.Model,
+		client:       openai.NewClientWithConfig(oc),
+		totalTimeout: tot,
+		ttftTimeout:  ttft,
+		idleTimeout:  idle,
+		logger:       logger,
+	}
+}
+
+func (c *OpenAICompatibleClient) clientFor(baseURL, apiKey string, timeout time.Duration) *openai.Client {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if baseURL == "" {
+		baseURL = c.baseURL
+	}
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		apiKey = c.apiKey
+	}
+	oc := openai.DefaultConfig(apiKey)
+	oc.BaseURL = baseURL
+	oc.HTTPClient = &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           (&net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout:   15 * time.Second,
+			ResponseHeaderTimeout: 120 * time.Second,
+			IdleConnTimeout:       90 * time.Second,
+		},
+	}
+	return openai.NewClientWithConfig(oc)
 }
 
 func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input ConsolidationRequest) (domain.ConsolidationOutput, error) {
@@ -53,43 +110,36 @@ func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input Consolid
 		return domain.ConsolidationOutput{}, fmt.Errorf("LLM provider is not configured")
 	}
 
-	url := c.baseURL + "/chat/completions"
-	body, err := c.buildRequestBody(input, true, true)
-	if err != nil {
-		return domain.ConsolidationOutput{}, err
-	}
-
+	started := time.Now()
 	c.logger.Info("llm request starting",
-		"url", url,
+		"baseUrl", c.baseURL,
 		"model", c.model,
 		"entries", len(input.Entries),
-		"timeout", c.client.Timeout.String(),
+		"totalTimeout", c.totalTimeout.String(),
+		"ttftTimeout", c.ttftTimeout.String(),
+		"idleTimeout", c.idleTimeout.String(),
 		"stream", true,
-		"jsonSchema", true,
-		"payloadBytes", len(body),
 	)
-	started := time.Now()
 
-	content, err := c.doStream(ctx, url, body, len(input.Entries))
+	attemptCtx, cancel := context.WithTimeout(ctx, c.totalTimeout)
+	defer cancel()
+
+	req := c.buildChatCompletionRequest(input, true, true)
+	content, err := c.doStream(attemptCtx, req, len(input.Entries))
 	if err != nil {
-		// Some OpenAI-compatible stacks hang or fail with stream+json_schema; fall back without strict json_schema.
 		if isStreamOrSchemaUnsupported(err) {
 			c.logger.Warn("llm streaming with strict json_schema failed/timed out, falling back without strict json_schema", "error", err)
-			body, err = c.buildRequestBody(input, true, false)
-			if err == nil {
-				content, err = c.doStream(ctx, url, body, len(input.Entries))
-			}
+			reqNoSchema := c.buildChatCompletionRequest(input, true, false)
+			content, err = c.doStream(attemptCtx, reqNoSchema, len(input.Entries))
 			if err != nil {
 				c.logger.Warn("llm streaming fallback failed, falling back to non-stream", "error", err)
-				body, err = c.buildRequestBody(input, false, false)
-				if err == nil {
-					content, err = c.doNonStream(ctx, url, body, len(input.Entries))
-				}
+				reqNonStream := c.buildChatCompletionRequest(input, false, false)
+				content, err = c.doNonStream(attemptCtx, reqNonStream, len(input.Entries))
 			}
 		}
 		if err != nil {
 			return domain.ConsolidationOutput{}, fmt.Errorf("LLM request to %s failed (timeout %s, model %s, %d entries, elapsed %s): %w",
-				url, c.client.Timeout, c.model, len(input.Entries), time.Since(started).Round(time.Millisecond), err)
+				c.baseURL, c.totalTimeout, c.model, len(input.Entries), time.Since(started).Round(time.Millisecond), err)
 		}
 	}
 
@@ -107,20 +157,20 @@ func (c *OpenAICompatibleClient) Consolidate(ctx context.Context, input Consolid
 	return output, nil
 }
 
-func (c *OpenAICompatibleClient) buildRequestBody(input ConsolidationRequest, stream bool, useSchema bool) ([]byte, error) {
-	prompt, err := json.Marshal(input)
-	if err != nil {
-		return nil, err
-	}
-	body := map[string]any{
-		"model":       c.model,
-		"temperature": 0,
-		"stream":      stream,
-		"messages": []map[string]string{
-			{"role": "system", "content": "You consolidate raw business tags into a minimal, reviewable taxonomy increment. You are provided with `existingTags` (already published canonical tag names in this namespace) and `entries` (unresolved raw candidate tags, each having an `id`, `name`, and `occurrences`). CRITICAL: In `coveredIds`, you MUST list the exact `id` strings of all candidate entries in `entries` that are covered or mapped by this proposed tag. Do NOT leave `coveredIds` empty. Every entry `id` from `entries` must appear in exactly one tag's `coveredIds` array. Never invent fake IDs. Prefer mapping candidate entries to existing published tags in `existingTags` as new aliases, or reusing an existing canonicalName, rather than creating redundant new canonical tags whenever an existing tag matches the semantic intent. In `aliases`, include ONLY newly proposed alias names for this batch—do NOT include existing canonical tag names or previously published aliases. Return ONLY valid JSON matching structure: {\"tags\":[{\"canonicalName\":string,\"description\":string,\"aliases\":[string],\"coveredIds\":[string],\"rationale\":string,\"confidence\":number}]}."},
-			{"role": "user", "content": string(prompt)},
+func (c *OpenAICompatibleClient) buildChatCompletionRequest(input ConsolidationRequest, stream bool, useSchema bool) openai.ChatCompletionRequest {
+	promptBytes, _ := json.Marshal(input)
+	sysPrompt := "You consolidate raw business tags into a minimal, reviewable taxonomy increment. You are provided with `existingTags` (already published canonical tag names in this namespace) and `entries` (unresolved raw candidate tags, each having an `id`, `name`, and `occurrences`). CRITICAL: In `coveredIds`, you MUST list the exact `id` strings of all candidate entries in `entries` that are covered or mapped by this proposed tag. Do NOT leave `coveredIds` empty. Every entry `id` from `entries` must appear in exactly one tag's `coveredIds` array. Never invent fake IDs. Prefer mapping candidate entries to existing published tags in `existingTags` as new aliases, or reusing an existing canonicalName, rather than creating redundant new canonical tags whenever an existing tag matches the semantic intent. In `aliases`, include ONLY newly proposed alias names for this batch—do NOT include existing canonical tag names or previously published aliases. Return ONLY valid JSON matching structure: {\"tags\":[{\"canonicalName\":string,\"description\":string,\"aliases\":[string],\"coveredIds\":[string],\"rationale\":string,\"confidence\":number}]}."
+
+	req := openai.ChatCompletionRequest{
+		Model:       c.model,
+		Temperature: 0,
+		Stream:      stream,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: sysPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: string(promptBytes)},
 		},
 	}
+
 	if useSchema {
 		schema := map[string]any{
 			"type":                 "object",
@@ -145,147 +195,90 @@ func (c *OpenAICompatibleClient) buildRequestBody(input ConsolidationRequest, st
 			},
 			"required": []string{"tags"},
 		}
-		body["response_format"] = map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   "tag_consolidation",
-				"strict": true,
-				"schema": schema,
+		schemaBytes, _ := json.Marshal(schema)
+		req.ResponseFormat = &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name:   "tag_consolidation",
+				Strict: true,
+				Schema: json.RawMessage(schemaBytes),
 			},
 		}
 	}
-	return json.Marshal(body)
+	return req
 }
 
-func (c *OpenAICompatibleClient) doStream(ctx context.Context, url string, body []byte, entryCount int) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
+func (c *OpenAICompatibleClient) doStream(ctx context.Context, req openai.ChatCompletionRequest, entryCount int) (string, error) {
+	reqCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 
-	headersAt := time.Now()
-	response, err := c.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
+	var timer *time.Timer
+	armed := false
 
-	c.logger.Info("llm response headers received",
-		"status", response.StatusCode,
-		"contentType", response.Header.Get("Content-Type"),
-		"ttfb", time.Since(headersAt).Round(time.Millisecond).String(),
-		"entries", entryCount,
-	)
-
-	if response.StatusCode < 200 || response.StatusCode > 299 {
-		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-		return "", fmt.Errorf("LLM returned %s: %s", response.Status, string(payload))
-	}
-
-	// Some servers ignore stream=true and still return a normal JSON body.
-	ct := strings.ToLower(response.Header.Get("Content-Type"))
-	if strings.Contains(ct, "application/json") && !strings.Contains(ct, "event-stream") {
-		payload, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-		if err != nil {
-			return "", err
+	timer = time.AfterFunc(c.ttftTimeout, func() {
+		cancel(errTTFTTimeout)
+	})
+	defer func() {
+		if timer != nil {
+			timer.Stop()
 		}
-		c.logger.Info("llm returned non-stream JSON body despite stream=true", "bytes", len(payload))
-		return extractContentFromCompletionJSON(payload)
-	}
+	}()
 
-	return c.readSSE(response.Body, c.client.Timeout)
-}
-
-func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, url string, body []byte, entryCount int) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	stream, err := c.client.CreateChatCompletionStream(reqCtx, req)
 	if err != nil {
-		return "", err
+		return "", classifyError(err, context.Cause(reqCtx), c.ttftTimeout, c.idleTimeout, false)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	headersAt := time.Now()
-	response, err := c.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-
-	c.logger.Info("llm non-stream response headers received",
-		"status", response.StatusCode,
-		"ttfb", time.Since(headersAt).Round(time.Millisecond).String(),
-		"entries", entryCount,
-	)
-
-	payload, _ := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if response.StatusCode < 200 || response.StatusCode > 299 {
-		return "", fmt.Errorf("LLM returned %s: %s", response.Status, string(payload))
-	}
-	return extractContentFromCompletionJSON(payload)
-}
-
-func (c *OpenAICompatibleClient) readSSE(body io.Reader, timeout time.Duration) (string, error) {
-	if timeout <= 0 {
-		timeout = 600 * time.Second
-	}
-	// Wrap with dynamic TTFT timeout matching configured LLM client timeout
-	scanner := bufio.NewScanner(newTTFTReader(body, timeout))
-	// Structured consolidation can emit large single SSE lines.
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 2<<20)
+	defer stream.Close()
 
 	var content strings.Builder
 	var reasoningContent strings.Builder
 	chunks := 0
-	firstTokenAt := time.Time{}
-	lastLogAt := time.Now()
 	started := time.Now()
+	lastLogAt := time.Now()
 
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "" {
-			continue
-		}
-		if data == "[DONE]" {
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
 			break
 		}
+		if err != nil {
+			return "", classifyError(err, context.Cause(reqCtx), c.ttftTimeout, c.idleTimeout, content.Len() > 0 || reasoningContent.Len() > 0)
+		}
 
-		var piece streamChunk
-		if err := json.Unmarshal([]byte(data), &piece); err != nil {
-			// Keep going; some providers send non-delta events.
-			c.logger.Debug("llm sse chunk not json", "data", truncate(data, 200))
+		if len(resp.Choices) == 0 {
 			continue
 		}
-		deltaText, isReasoning := piece.deltaContent()
-		if deltaText == "" {
+		delta := resp.Choices[0].Delta
+		text := delta.Content
+		isReasoning := false
+		if text == "" {
+			reasoningText := extractReasoningContent(resp)
+			if reasoningText != "" {
+				text = reasoningText
+				isReasoning = true
+			}
+		}
+		if text == "" {
 			continue
 		}
-		if firstTokenAt.IsZero() {
-			firstTokenAt = time.Now()
+
+		if !armed {
+			armed = true
 			c.logger.Info("llm first token received",
-				"ttft", firstTokenAt.Sub(started).Round(time.Millisecond).String(),
+				"ttft", time.Since(started).Round(time.Millisecond).String(),
 				"isReasoning", isReasoning,
 			)
 		}
-		chunks++
+		timer.Reset(c.idleTimeout)
 
 		if isReasoning {
-			reasoningContent.WriteString(deltaText)
-			c.logger.Info("llm token [thinking]", "chunk", chunks, "delta", deltaText)
+			reasoningContent.WriteString(text)
 		} else {
-			content.WriteString(deltaText)
-			c.logger.Info("llm token [content]", "chunk", chunks, "delta", deltaText)
+			content.WriteString(text)
 		}
+		chunks++
+
+		c.logger.Debug("llm token chunk", "chunk", chunks, "isReasoning", isReasoning, "text", text)
 
 		if time.Since(lastLogAt) >= 3*time.Second {
 			if content.Len() > 0 {
@@ -293,107 +286,85 @@ func (c *OpenAICompatibleClient) readSSE(body io.Reader, timeout time.Duration) 
 					"chunks", chunks,
 					"contentBytes", content.Len(),
 					"elapsed", time.Since(started).Round(time.Millisecond).String(),
-					"totalContent", truncate(content.String(), 200),
+					"preview", truncate(content.String(), 120),
 				)
 			} else if reasoningContent.Len() > 0 {
 				c.logger.Info("llm reasoning progress summary",
 					"chunks", chunks,
 					"reasoningBytes", reasoningContent.Len(),
 					"elapsed", time.Since(started).Round(time.Millisecond).String(),
-					"totalReasoning", truncate(reasoningContent.String(), 200),
+					"preview", truncate(reasoningContent.String(), 120),
 				)
 			}
 			lastLogAt = time.Now()
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Client.Timeout") {
-			return "", fmt.Errorf("大模型生成流响应超时 (read SSE stream: %w)。提示：大模型对较大批次候选词的结构化归并生成耗时较长，请前往【设置中心】增大超时时间(TimeoutSeconds，建议 600 秒以上)或调小候选池触发阈值", err)
-		}
-		return "", fmt.Errorf("read SSE stream: %w", err)
-	}
+
 	if content.Len() == 0 {
 		if reasoningContent.Len() > 0 {
 			return "", fmt.Errorf("LLM 输出了思考过程但未输出最终 content (%d chunks)", chunks)
 		}
 		return "", fmt.Errorf("LLM stream completed with empty content (%d chunks)", chunks)
 	}
-	c.logger.Info("llm stream finished",
-		"chunks", chunks,
-		"contentBytes", content.Len(),
-		"elapsed", time.Since(started).Round(time.Millisecond).String(),
-	)
 	return content.String(), nil
 }
 
-type streamChunk struct {
+type reasoningChunk struct {
 	Choices []struct {
 		Delta struct {
-			Content          string `json:"content"`
 			ReasoningContent string `json:"reasoning_content"`
 		} `json:"delta"`
-		Message struct {
-			Content          string `json:"content"`
-			ReasoningContent string `json:"reasoning_content"`
-		} `json:"message"`
 	} `json:"choices"`
 }
 
-func (c streamChunk) deltaContent() (string, bool) {
-	if len(c.Choices) == 0 {
-		return "", false
+func extractReasoningContent(resp openai.ChatCompletionStreamResponse) string {
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return ""
 	}
-	ch := c.Choices[0]
-	if ch.Delta.Content != "" {
-		return ch.Delta.Content, false
+	var rc reasoningChunk
+	if err := json.Unmarshal(b, &rc); err == nil && len(rc.Choices) > 0 {
+		return rc.Choices[0].Delta.ReasoningContent
 	}
-	if ch.Message.Content != "" {
-		return ch.Message.Content, false
-	}
-	if ch.Delta.ReasoningContent != "" {
-		return ch.Delta.ReasoningContent, true
-	}
-	if ch.Message.ReasoningContent != "" {
-		return ch.Message.ReasoningContent, true
-	}
-	return "", false
+	return ""
 }
 
-func extractContentFromCompletionJSON(payload []byte) (string, error) {
-	var decoded struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(payload, &decoded); err != nil {
+func (c *OpenAICompatibleClient) doNonStream(ctx context.Context, req openai.ChatCompletionRequest, entryCount int) (string, error) {
+	resp, err := c.client.CreateChatCompletion(ctx, req)
+	if err != nil {
 		return "", err
 	}
-	if len(decoded.Choices) == 0 {
-		return "", fmt.Errorf("LLM returned no choices")
+	if len(resp.Choices) == 0 {
+		return "", fmt.Errorf("LLM returned empty choices")
 	}
-	return decoded.Choices[0].Message.Content, nil
+	return resp.Choices[0].Message.Content, nil
 }
 
-func parseConsolidationContent(content string) (domain.ConsolidationOutput, error) {
-	cleaned := strings.TrimSpace(content)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```JSON")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
-
-	var output domain.ConsolidationOutput
-	if err := json.Unmarshal([]byte(cleaned), &output); err != nil {
-		return domain.ConsolidationOutput{}, fmt.Errorf("invalid LLM structured output: %w; preview=%q", err, truncate(cleaned, 240))
+func classifyError(err error, cause error, ttft, idle time.Duration, gotContent bool) error {
+	if err == nil {
+		return nil
 	}
-	return output, nil
+	if errors.Is(cause, errTTFTTimeout) || (cause != nil && strings.Contains(cause.Error(), "ttft timeout")) {
+		return fmt.Errorf("大模型生成流响应超时 (wait first token timeout: TTFT > %v)。提示：大模型 Prefill 预处理暂无响应或卡死，系统已自动切断并触发 Fallback 降级", ttft)
+	}
+	if errors.Is(cause, errIdleTimeout) || (cause != nil && strings.Contains(cause.Error(), "idle timeout")) {
+		return fmt.Errorf("大模型生成流响应空闲超时 (inter-token idle timeout > %v)。提示：大模型中途停顿未产生新 Token，系统已自动切断并触发 Fallback 降级", idle)
+	}
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
+		if gotContent {
+			return fmt.Errorf("大模型生成流响应空闲超时 (inter-token idle timeout > %v): %w", idle, err)
+		}
+		return fmt.Errorf("大模型首 Token 响应超时 (wait first token timeout: TTFT > %v): %w", ttft, err)
+	}
+	return err
 }
 
 func isStreamOrSchemaUnsupported(err error) bool {
 	if err == nil {
 		return false
+	}
+	if errors.Is(err, errTTFTTimeout) || errors.Is(err, errIdleTimeout) {
+		return true
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "stream") ||
@@ -402,6 +373,7 @@ func isStreamOrSchemaUnsupported(err error) bool {
 		strings.Contains(msg, "guided_decoding") ||
 		strings.Contains(msg, "grammar") ||
 		strings.Contains(msg, "ttft") ||
+		strings.Contains(msg, "idle") ||
 		strings.Contains(msg, "wait first token timeout") ||
 		strings.Contains(msg, "400") ||
 		strings.Contains(msg, "unsupported") ||
@@ -409,38 +381,22 @@ func isStreamOrSchemaUnsupported(err error) bool {
 		strings.Contains(msg, "invalid")
 }
 
-type ttftReader struct {
-	reader       io.Reader
-	ttftTimeout  time.Duration
-	gotFirstByte bool
-}
-
-func newTTFTReader(r io.Reader, timeout time.Duration) *ttftReader {
-	return &ttftReader{reader: r, ttftTimeout: timeout}
-}
-
-func (tr *ttftReader) Read(p []byte) (int, error) {
-	if !tr.gotFirstByte {
-		type readRes struct {
-			n   int
-			err error
-		}
-		ch := make(chan readRes, 1)
-		go func() {
-			n, err := tr.reader.Read(p)
-			ch <- readRes{n, err}
-		}()
-		select {
-		case res := <-ch:
-			if res.n > 0 {
-				tr.gotFirstByte = true
-			}
-			return res.n, res.err
-		case <-time.After(tr.ttftTimeout):
-			return 0, fmt.Errorf("wait first token timeout (TTFT > %v)", tr.ttftTimeout)
-		}
+func parseConsolidationContent(content string) (domain.ConsolidationOutput, error) {
+	cleaned := strings.TrimSpace(content)
+	if strings.HasPrefix(cleaned, "```json") {
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+		cleaned = strings.TrimSuffix(cleaned, "```")
+	} else if strings.HasPrefix(cleaned, "```") {
+		cleaned = strings.TrimPrefix(cleaned, "```")
+		cleaned = strings.TrimSuffix(cleaned, "```")
 	}
-	return tr.reader.Read(p)
+	cleaned = strings.TrimSpace(cleaned)
+
+	var output domain.ConsolidationOutput
+	if err := json.Unmarshal([]byte(cleaned), &output); err != nil {
+		return domain.ConsolidationOutput{}, fmt.Errorf("invalid LLM structured output: %w; preview=%q", err, truncate(cleaned, 240))
+	}
+	return output, nil
 }
 
 func truncate(s string, n int) string {
@@ -525,36 +481,24 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 		"required": []string{"overallSummary", "tagAdvice"},
 	}
 
-	reqBodyMap := map[string]any{
-		"model":       model,
-		"temperature": 0.2,
-		"max_tokens":  8192,
-		"messages": []map[string]string{
-			{"role": "system", "content": sysPrompt},
-			{"role": "user", "content": string(userPayload)},
+	schemaBytes, _ := json.Marshal(schema)
+	req := openai.ChatCompletionRequest{
+		Model:       model,
+		Temperature: 0.2,
+		MaxTokens:   8192,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: sysPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: string(userPayload)},
 		},
-		"response_format": map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   "ai_audit_response",
-				"strict": true,
-				"schema": schema,
+		ResponseFormat: &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name:   "ai_audit_response",
+				Strict: true,
+				Schema: json.RawMessage(schemaBytes),
 			},
 		},
 	}
-
-	reqBodyBytes, err := json.Marshal(reqBodyMap)
-	if err != nil {
-		return domain.AIAuditEvaluateResponse{}, err
-	}
-
-	url := baseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBodyBytes))
-	if err != nil {
-		return domain.AIAuditEvaluateResponse{}, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
 
 	timeout := 600 * time.Second
 	if cfg.TimeoutSeconds > 0 {
@@ -564,46 +508,22 @@ func (c *OpenAICompatibleClient) EvaluateProposal(ctx context.Context, cfg domai
 		}
 		timeout = time.Duration(tSec) * time.Second
 	}
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ResponseHeaderTimeout: 120 * time.Second,
-		IdleConnTimeout:       90 * time.Second,
-	}
-	client := &http.Client{
-		Timeout:   timeout,
-		Transport: tr,
-	}
-	resp, err := client.Do(httpReq)
+
+	client := c.clientFor(baseURL, apiKey, timeout)
+	resp, err := client.CreateChatCompletion(ctx, req)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") || strings.Contains(err.Error(), "Client.Timeout") {
 			return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型响应超时 (超过 %d 秒未返回)。提示：模型对较多提案标签评估生成耗时较长，请前往【设置中心】增大超时时间(TimeoutSeconds，建议 600 秒以上)", int(timeout.Seconds()))
 		}
-		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审 Endpoint (%s) 失败: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBytes, _ := io.ReadAll(resp.Body)
-		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审 Endpoint 返回错误状态码 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
+		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审 Endpoint (%s) 失败: %w", baseURL, err)
 	}
 
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return domain.AIAuditEvaluateResponse{}, err
-	}
-
-	if len(chatResp.Choices) == 0 {
+	if len(resp.Choices) == 0 {
 		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审服务未返回有效 Choices")
 	}
 
 	var result domain.AIAuditEvaluateResponse
-	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	rawContent := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if err := json.Unmarshal([]byte(rawContent), &result); err != nil {
 		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("解析 AI 助审响应 JSON 失败: %w", err)
 	}
@@ -686,86 +606,77 @@ func (c *OpenAICompatibleClient) EvaluateProposalStream(ctx context.Context, cfg
 		"required": []string{"overallSummary", "tagAdvice"},
 	}
 
-	reqBodyMap := map[string]any{
-		"model":       model,
-		"stream":      true,
-		"temperature": 0.2,
-		"max_tokens":  8192,
-		"messages": []map[string]string{
-			{"role": "system", "content": sysPrompt},
-			{"role": "user", "content": string(userPayload)},
+	schemaBytes, _ := json.Marshal(schema)
+	req := openai.ChatCompletionRequest{
+		Model:       model,
+		Stream:      true,
+		Temperature: 0.2,
+		MaxTokens:   8192,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: sysPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: string(userPayload)},
 		},
-		"response_format": map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   "ai_audit_response",
-				"strict": true,
-				"schema": schema,
+		ResponseFormat: &openai.ChatCompletionResponseFormat{
+			Type: openai.ChatCompletionResponseFormatTypeJSONSchema,
+			JSONSchema: &openai.ChatCompletionResponseFormatJSONSchema{
+				Name:   "ai_audit_response",
+				Strict: true,
+				Schema: json.RawMessage(schemaBytes),
 			},
 		},
 	}
 
-	reqBodyBytes, err := json.Marshal(reqBodyMap)
-	if err != nil {
-		return domain.AIAuditEvaluateResponse{}, err
-	}
-
-	url := baseURL + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBodyBytes))
-	if err != nil {
-		return domain.AIAuditEvaluateResponse{}, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	timeout := 300 * time.Second
+	tot := 300 * time.Second
 	if cfg.TimeoutSeconds > 0 {
-		timeout = time.Duration(cfg.TimeoutSeconds) * time.Second
+		tot = time.Duration(cfg.TimeoutSeconds) * time.Second
 	}
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "Client.Timeout") {
-			return domain.AIAuditEvaluateResponse{}, fmt.Errorf("AI 助审大模型响应超时 (超过 %d 秒未返回)。建议更换更快的模型或检查大模型服务状态", int(timeout.Seconds()))
-		}
-		return domain.AIAuditEvaluateResponse{}, fmt.Errorf("请求 AI 助审 Endpoint (%s) 失败: %w", url, err)
+	ttft := 150 * time.Second
+	if ttft > tot {
+		ttft = tot
 	}
-	defer resp.Body.Close()
+	idle := 90 * time.Second
+	if idle > tot {
+		idle = tot
+	}
 
-	if resp.StatusCode != http.StatusOK {
+	client := c.clientFor(baseURL, apiKey, 0)
+	reqCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+
+	timer := time.AfterFunc(ttft, func() {
+		cancel(errTTFTTimeout)
+	})
+	defer timer.Stop()
+
+	stream, err := client.CreateChatCompletionStream(reqCtx, req)
+	if err != nil {
 		return c.EvaluateProposal(ctx, cfg, proposal, candidateEntries)
 	}
+	defer stream.Close()
 
 	var fullContent strings.Builder
-	scanner := bufio.NewScanner(resp.Body)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if data == "[DONE]" {
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		var streamResp struct {
-			Choices []struct {
-				Delta struct {
-					Content string `json:"content"`
-				} `json:"delta"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal([]byte(data), &streamResp); err == nil && len(streamResp.Choices) > 0 {
-			content := streamResp.Choices[0].Delta.Content
-			if content != "" {
-				fullContent.WriteString(content)
-				if onChunk != nil {
-					onChunk(content)
-				}
+		if err != nil {
+			if fullContent.Len() == 0 {
+				return c.EvaluateProposal(ctx, cfg, proposal, candidateEntries)
 			}
+			return domain.AIAuditEvaluateResponse{}, classifyError(err, context.Cause(reqCtx), ttft, idle, true)
+		}
+		if len(resp.Choices) == 0 {
+			continue
+		}
+		text := resp.Choices[0].Delta.Content
+		if text == "" {
+			continue
+		}
+		timer.Reset(idle)
+		fullContent.WriteString(text)
+		if onChunk != nil {
+			onChunk(text)
 		}
 	}
 
@@ -804,37 +715,14 @@ func (c *OpenAICompatibleClient) FetchModels(ctx context.Context, baseURL, apiKe
 		return nil, fmt.Errorf("BaseURL 和 APIKey 为必填项，无法获取模型列表")
 	}
 
-	url := baseURL + "/models"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	client := c.clientFor(baseURL, apiKey, 15*time.Second)
+	res, err := client.ListModels(ctx)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Accept", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("无法连接到 %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("Endpoint 返回错误状态码 %d: %s", resp.StatusCode, truncate(string(body), 200))
+		return nil, fmt.Errorf("无法连接到 %s/models: %w", baseURL, err)
 	}
 
-	var res struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
-		return nil, fmt.Errorf("解析模型列表 JSON 失败: %w", err)
-	}
-
-	models := make([]string, 0, len(res.Data))
-	for _, m := range res.Data {
+	models := make([]string, 0, len(res.Models))
+	for _, m := range res.Models {
 		if strings.TrimSpace(m.ID) != "" {
 			models = append(models, m.ID)
 		}
@@ -860,38 +748,20 @@ func (c *OpenAICompatibleClient) TestConnection(ctx context.Context, cfg domain.
 		return 0, fmt.Errorf(" BaseURL、APIKey 与 Model 为必填项，无法发起连接测试")
 	}
 
-	reqBody := map[string]any{
-		"model": model,
-		"messages": []map[string]string{
-			{"role": "user", "content": "ping"},
+	client := c.clientFor(baseURL, apiKey, 15*time.Second)
+	req := openai.ChatCompletionRequest{
+		Model: model,
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleUser, Content: "ping"},
 		},
-		"max_tokens": 1,
-	}
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return 0, err
+		MaxTokens: 1,
 	}
 
-	url := baseURL + "/chat/completions"
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 15 * time.Second}
 	started := time.Now()
-	resp, err := client.Do(req)
+	_, err := client.CreateChatCompletion(ctx, req)
 	latency := time.Since(started).Milliseconds()
 	if err != nil {
 		return latency, fmt.Errorf("连接失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBytes, _ := io.ReadAll(resp.Body)
-		return latency, fmt.Errorf("返回错误状态码 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
 	}
 	return latency, nil
 }
@@ -921,66 +791,25 @@ func (c *OpenAICompatibleClient) ExtractTagFromText(ctx context.Context, req dom
 请严格按照 JSON 格式返回 JSON 对象，不要包含 markdown 标记或除 JSON 以外的任何文字：
 {"extractedTag": "提取出的规范标签短语", "reasoning": "简要提取理由与核心特征归纳"}`, nsName, text)
 
-	type openAIMessage struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
-	}
-	type openAIRequest struct {
-		Model       string          `json:"model"`
-		Temperature float64         `json:"temperature"`
-		Messages    []openAIMessage `json:"messages"`
-	}
-
-	reqBody := openAIRequest{
+	chatReq := openai.ChatCompletionRequest{
 		Model:       c.model,
 		Temperature: 0.1,
-		Messages: []openAIMessage{
-			{Role: "system", Content: sysPrompt},
-			{Role: "user", Content: userPrompt},
+		Messages: []openai.ChatCompletionMessage{
+			{Role: openai.ChatMessageRoleSystem, Content: sysPrompt},
+			{Role: openai.ChatMessageRoleUser, Content: userPrompt},
 		},
 	}
 
-	payload, err := json.Marshal(reqBody)
-	if err != nil {
-		return domain.ExtractTagResponse{}, err
-	}
-
-	url := strings.TrimRight(c.baseURL, "/") + "/chat/completions"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return domain.ExtractTagResponse{}, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(httpReq)
+	resp, err := c.client.CreateChatCompletion(ctx, chatReq)
 	if err != nil {
 		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 接口请求失败: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		respBytes, _ := io.ReadAll(resp.Body)
-		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 返回 HTTP 状态 %d: %s", resp.StatusCode, truncate(string(respBytes), 200))
-	}
-
-	var chatResp struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return domain.ExtractTagResponse{}, fmt.Errorf("解析 LLM 响应失败: %w", err)
-	}
-
-	if len(chatResp.Choices) == 0 {
+	if len(resp.Choices) == 0 {
 		return domain.ExtractTagResponse{}, fmt.Errorf("LLM 未返回有效回答")
 	}
 
-	rawContent := strings.TrimSpace(chatResp.Choices[0].Message.Content)
+	rawContent := strings.TrimSpace(resp.Choices[0].Message.Content)
 	if strings.HasPrefix(rawContent, "```json") {
 		rawContent = strings.TrimPrefix(rawContent, "```json")
 		rawContent = strings.TrimSuffix(rawContent, "```")

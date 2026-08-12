@@ -33,7 +33,7 @@ func main() {
 		"llmTimeout", cfg.LLM.Timeout.String(),
 		"llmMaxRetries", cfg.LLM.MaxRetries,
 	)
-	processor := worker.New(application.Database.Pool, llm.NewOpenAICompatible(cfg.LLM, logger), logger, cfg.LLM.MaxRetries)
+	processor := worker.New(application.Database.Pool, llm.NewOpenAICompatible(cfg.LLM, logger), logger, cfg.LLM.MaxRetries, cfg)
 	if err := processor.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Fatal(err)
 	}

@@ -3,6 +3,7 @@ package worker
 import (
 	"testing"
 
+	"github.com/codefun/tagmanager/backend/internal/config"
 	"github.com/codefun/tagmanager/backend/internal/domain"
 	"github.com/codefun/tagmanager/backend/internal/llm"
 )
@@ -81,12 +82,12 @@ func TestDetermineFailStatus(t *testing.T) {
 }
 
 func TestWorkerNewDefaultMaxAttempts(t *testing.T) {
-	w := New(nil, nil, nil, 0)
+	w := New(nil, nil, nil, 0, config.Config{})
 	if w.maxAttempts != 3 {
 		t.Errorf("expected default maxAttempts to be 3, got %d", w.maxAttempts)
 	}
 
-	wCustom := New(nil, nil, nil, 5)
+	wCustom := New(nil, nil, nil, 5, config.Config{})
 	if wCustom.maxAttempts != 5 {
 		t.Errorf("expected custom maxAttempts to be 5, got %d", wCustom.maxAttempts)
 	}

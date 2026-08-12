@@ -47,7 +47,7 @@ type ImportResult struct {
 	JobID                string `json:"jobId,omitempty"`
 	OpenCandidates       int    `json:"openCandidates,omitempty"`
 	Threshold            int    `json:"threshold,omitempty"`
-	ConsolidationStatus  string `json:"consolidationStatus,omitempty"`  // created | already_active | reclaimed | not_triggered
+	ConsolidationStatus  string `json:"consolidationStatus,omitempty"` // created | already_active | reclaimed | not_triggered
 	ConsolidationMessage string `json:"consolidationMessage,omitempty"`
 }
 
@@ -198,12 +198,15 @@ type AIAuditEvaluateResponse struct {
 }
 
 type LLMServiceConfig struct {
-	BaseURL        string `json:"baseUrl"`
-	APIKey         string `json:"apiKey"`
-	Model          string `json:"model"`
-	TimeoutSeconds int    `json:"timeoutSeconds,omitempty"`
-	MaxRetries     int    `json:"maxRetries,omitempty"`
-	SystemPrompt   string `json:"systemPrompt,omitempty"`
+	BaseURL          string `json:"baseUrl"`
+	APIKey           string `json:"apiKey"`
+	Model            string `json:"model"`
+	TimeoutSeconds   int    `json:"timeoutSeconds,omitempty"`
+	TTFTSeconds      int    `json:"ttftSeconds,omitempty"`
+	IdleSeconds      int    `json:"idleSeconds,omitempty"`
+	JobBudgetSeconds int    `json:"jobBudgetSeconds,omitempty"`
+	MaxRetries       int    `json:"maxRetries,omitempty"`
+	SystemPrompt     string `json:"systemPrompt,omitempty"`
 }
 
 type SystemSettingsPayload struct {

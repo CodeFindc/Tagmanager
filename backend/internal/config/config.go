@@ -19,11 +19,14 @@ type Config struct {
 }
 
 type LLMConfig struct {
-	BaseURL    string
-	APIKey     string
-	Model      string
-	Timeout    time.Duration
-	MaxRetries int
+	BaseURL     string
+	APIKey      string
+	Model       string
+	Timeout     time.Duration
+	TTFTTimeout time.Duration
+	IdleTimeout time.Duration
+	JobBudget   time.Duration
+	MaxRetries  int
 }
 
 func Load() (Config, error) {
@@ -35,13 +38,14 @@ func Load() (Config, error) {
 		SeedAdminEmail:    valueOrDefault("SEED_ADMIN_EMAIL", "admin@example.com"),
 		SeedAdminPassword: valueOrDefault("SEED_ADMIN_PASSWORD", "change-me-now"),
 		LLM: LLMConfig{
-			BaseURL:    strings.TrimRight(strings.TrimSpace(os.Getenv("LLM_BASE_URL")), "/"),
-			APIKey:     strings.TrimSpace(os.Getenv("LLM_API_KEY")),
-			Model:      strings.TrimSpace(os.Getenv("LLM_MODEL")),
-			// Local 27B+ OpenAI-compatible servers often need several minutes for
-				// structured consolidation of a full candidate window.
-				Timeout:    time.Duration(intValueOrDefault("LLM_TIMEOUT_SECONDS", 300)) * time.Second,
-			MaxRetries: intValueOrDefault("LLM_MAX_RETRIES", 3),
+			BaseURL:     strings.TrimRight(strings.TrimSpace(os.Getenv("LLM_BASE_URL")), "/"),
+			APIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
+			Model:       strings.TrimSpace(os.Getenv("LLM_MODEL")),
+			Timeout:     time.Duration(intValueOrDefault("LLM_TIMEOUT_SECONDS", 1200)) * time.Second,
+			TTFTTimeout: time.Duration(intValueOrDefault("LLM_TTFT_SECONDS", 150)) * time.Second,
+			IdleTimeout: time.Duration(intValueOrDefault("LLM_IDLE_SECONDS", 90)) * time.Second,
+			JobBudget:   time.Duration(intValueOrDefault("LLM_JOB_BUDGET_SECONDS", 1200)) * time.Second,
+			MaxRetries:  intValueOrDefault("LLM_MAX_RETRIES", 3),
 		},
 	}
 
